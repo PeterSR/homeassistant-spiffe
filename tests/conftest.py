@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Generator, Iterable
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -54,6 +55,8 @@ class Signer:
                 "aud": sorted(audience),
                 "iat": now,
                 "exp": now + int(lifetime.total_seconds()),
+                # Tokens minted in the same second must differ, as they do with a real issuer.
+                "jti": uuid.uuid4().hex,
             },
             self.key,
             algorithm="ES256",

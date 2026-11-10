@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import timedelta
 
 import pytest
@@ -13,6 +14,8 @@ from custom_components.spiffe import (
     SpiffeAuthError,
     SpiffeError,
     SpiffeNotReady,
+    async_register_verified_webhook,
+    async_validate_jwt_svid,
     async_verify_request,
 )
 from custom_components.spiffe.const import (
@@ -22,7 +25,7 @@ from custom_components.spiffe.const import (
     DOMAIN,
     REPLAY_CACHE_MAX_ENTRIES,
 )
-from custom_components.spiffe.replay import DATA_REPLAY_CACHE, ReplayCache
+from custom_components.spiffe.replay import DATA_REPLAY_CACHE, ReplayCache, ReplayCacheFull
 
 from .conftest import CALLER, HA_SPIFFE_ID, OTHER, FakeSource, Signer
 
@@ -171,18 +174,114 @@ async def test_auth_error_is_a_spiffe_error() -> None:
 
 def test_replay_cache_is_bounded_and_drops_expired() -> None:
     cache = ReplayCache(max_entries=3)
-    assert cache.check_and_record("a", 110, now=100)
-    assert not cache.check_and_record("a", 110, now=101)
-    assert cache.check_and_record("b", 200, now=101)
-    assert cache.check_and_record("c", 200, now=102)
+    assert cache.check_and_record("a.p.s", 110, now=100)
+    assert not cache.check_and_record("a.p.s", 110, now=101)
+    assert cache.check_and_record("b.p.s", 200, now=101)
+    assert cache.check_and_record("c.p.s", 200, now=102)
     # "a" has expired by now and makes room, so nothing live is dropped.
-    assert cache.check_and_record("d", 300, now=120)
+    assert cache.check_and_record("d.p.s", 300, now=120)
     assert len(cache) == 3
-    assert not cache.check_and_record("b", 200, now=121)
-    # Full of live entries: the oldest goes, the cache never grows past its bound.
-    assert cache.check_and_record("e", 300, now=122)
+    assert not cache.check_and_record("b.p.s", 200, now=121)
+    # Full of live entries: it refuses instead of forgetting one, and keeps what it has.
+    with pytest.raises(ReplayCacheFull):
+        cache.check_and_record("e.p.s", 300, now=122)
     assert len(cache) == 3
-    assert REPLAY_CACHE_MAX_ENTRIES > 0
+    assert not cache.check_and_record("b.p.s", 200, now=122)
+    assert REPLAY_CACHE_MAX_ENTRIES >= 16384
+
+
+def test_replay_cache_ignores_the_signature_segment() -> None:
+    cache = ReplayCache()
+    assert cache.check_and_record("header.payload.sig1", 200, now=100)
+    assert not cache.check_and_record("header.payload.sig2==", 200, now=100)
+
+
+async def test_flood_does_not_free_a_used_token(
+    hass: HomeAssistant, fake_source: FakeSource, signer: Signer
+) -> None:
+    await setup_spiffe(hass)
+    hass.data[DATA_REPLAY_CACHE] = ReplayCache(max_entries=2)
+    first = signer.token([HA_SPIFFE_ID], subject=CALLER)
+    await async_verify_request(hass, _request(first), allowed_callers=[CALLER])
+    await async_verify_request(
+        hass, _request(signer.token([HA_SPIFFE_ID], subject=CALLER)), allowed_callers=[CALLER]
+    )
+    # The cache is full: new tokens are answered 503 (not ready), the used one stays refused.
+    with pytest.raises(SpiffeNotReady):
+        await async_verify_request(
+            hass, _request(signer.token([HA_SPIFFE_ID], subject=CALLER)), allowed_callers=[CALLER]
+        )
+    assert await _status(hass, _request(first), [CALLER]) == 401
+
+
+def _flip_s(token: str) -> str:
+    """The other valid ECDSA signature for the same message: (r, n - s)."""
+    head, sig = token.rsplit(".", 1)
+    raw = base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4))
+    r, s = raw[:32], int.from_bytes(raw[32:], "big")
+    order = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+    flipped = r + (order - s).to_bytes(32, "big")
+    return head + "." + base64.urlsafe_b64encode(flipped).rstrip(b"=").decode()
+
+
+async def test_signature_variants_are_replays(
+    hass: HomeAssistant, fake_source: FakeSource, signer: Signer
+) -> None:
+    await setup_spiffe(hass)
+    token = signer.token([HA_SPIFFE_ID], subject=CALLER)
+    variants = [token + "==", _flip_s(token)]
+    # Each variant is itself accepted by validation, so only the replay cache can stop it.
+    for variant in variants:
+        assert await async_validate_jwt_svid(hass, variant, HA_SPIFFE_ID) == CALLER
+    await async_verify_request(hass, _request(token), allowed_callers=[CALLER])
+    for variant in variants:
+        assert await _status(hass, _request(variant), [CALLER]) == 401
+
+
+async def test_multiple_audiences_are_refused(
+    hass: HomeAssistant, fake_source: FakeSource, signer: Signer
+) -> None:
+    await setup_spiffe(hass)
+    token = signer.token([HA_SPIFFE_ID, "spiffe://example.org/other/api"], subject=CALLER)
+    # Plain validation still accepts it (the 0.1.0 contract); a request must not.
+    assert await async_validate_jwt_svid(hass, token, HA_SPIFFE_ID) == CALLER
+    assert await _status(hass, _request(token), [CALLER]) == 401
+
+
+async def test_single_element_audience_list_is_accepted(
+    hass: HomeAssistant, fake_source: FakeSource, signer: Signer
+) -> None:
+    await setup_spiffe(hass)
+    token = signer.token([HA_SPIFFE_ID], subject=CALLER)  # the signer emits a list
+    assert await async_verify_request(hass, _request(token), allowed_callers=[CALLER]) == CALLER
+
+
+async def test_bad_allowed_callers(hass: HomeAssistant, fake_source: FakeSource) -> None:
+    await setup_spiffe(hass)
+    with pytest.raises(TypeError):
+        await async_verify_request(hass, _request("x"), allowed_callers=CALLER)
+    with pytest.raises(ValueError):
+        await async_verify_request(hass, _request("x"), allowed_callers=["not-a-spiffe-id"])
+
+    async def handler(hass, webhook_id, request, caller):
+        return None
+
+    with pytest.raises(TypeError):
+        async_register_verified_webhook(hass, "t", "T", "h", handler, allowed_callers=CALLER)
+    with pytest.raises(ValueError):
+        async_register_verified_webhook(
+            hass, "t", "T", "h", handler, allowed_callers=["spiffe://x"]
+        )
+
+
+async def test_unauthenticated_callers_cannot_probe_readiness(
+    hass: HomeAssistant, fake_source: FakeSource
+) -> None:
+    await setup_spiffe(hass, options={})  # not ready: no SPIFFE ID
+    assert await _status(hass, _request(), [CALLER]) == 401
+    assert await _status(hass, _request(header="Basic abc"), [CALLER]) == 401
+    with pytest.raises(SpiffeNotReady):  # only a request that has a bearer sees the 503
+        await async_verify_request(hass, _request("a.b.c"), allowed_callers=[CALLER])
 
 
 async def test_cache_lives_in_hass_data(

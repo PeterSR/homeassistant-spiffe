@@ -191,3 +191,52 @@ async def test_not_ready(hass: HomeAssistant, aioclient_mock: AiohttpClientMocke
     with pytest.raises(HomeAssistantError):
         await _call(hass, {})
     assert aioclient_mock.call_count == 0
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"X-Test": "a\r\nX-Evil: 1"},
+        {"X-Test": "a\nb"},
+        {"X-Test": "a\x00b"},
+        {"Bad Name": "1"},
+        {"Bad:Name": "1"},
+        {"": "1"},
+        {"X-Ü": "1"},
+    ],
+)
+async def test_refuses_invalid_headers(
+    hass: HomeAssistant,
+    fake_source: FakeSource,
+    aioclient_mock: AiohttpClientMocker,
+    headers: dict[str, str],
+) -> None:
+    await setup_spiffe(hass)
+    with pytest.raises(ServiceValidationError) as err:
+        await _call(hass, {"headers": headers})
+    assert err.value.translation_key == "invalid_header"
+    assert aioclient_mock.call_count == 0
+    assert fake_source.svid_requests == []
+
+
+async def test_error_messages_use_translation_and_hide_credentials(
+    hass: HomeAssistant, fake_source: FakeSource, aioclient_mock: AiohttpClientMocker
+) -> None:
+    await setup_spiffe(hass)
+    url = "https://user:secret@api.example.org:8443/hook"
+    aioclient_mock.post(url, exc=aiohttp.ClientConnectionError(f"cannot reach {url}"))
+    with pytest.raises(HomeAssistantError) as err:
+        await _call(hass, {"url": url})
+    assert err.value.translation_key == "request_failed"
+    assert err.value.translation_placeholders == {
+        "host": "api.example.org",
+        "error": "ClientConnectionError",
+    }
+    assert "secret" not in str(err.value)
+
+    with pytest.raises(ServiceValidationError) as invalid:
+        await _call(hass, {"url": "ftp://x/y"})
+    assert invalid.value.translation_key == "invalid_url"
+    with pytest.raises(ServiceValidationError) as auth:
+        await _call(hass, {"headers": {"authorization": "x"}})
+    assert auth.value.translation_key == "authorization_header"

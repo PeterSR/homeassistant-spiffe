@@ -314,3 +314,23 @@ async def test_subentry_flow_rejects_duplicate_webhook_id_and_reconfigures(
     (subentry,) = entry.subentries.values()
     assert subentry.title == "A2"
     assert subentry.data[CONF_ALLOWED_CALLERS] == [OTHER]
+
+
+async def test_subentry_names_are_unique(hass: HomeAssistant, fake_source: FakeSource) -> None:
+    entry = await setup_spiffe(hass)
+    first = await _start_subentry(hass, entry)
+    await hass.config_entries.subentries.async_configure(
+        first["flow_id"],
+        {CONF_NAME: "Orders", CONF_WEBHOOK_ID: "valid-id-0123456", CONF_ALLOWED_CALLERS: [CALLER]},
+    )
+    await hass.async_block_till_done()
+    second = await _start_subentry(hass, entry)
+    second = await hass.config_entries.subentries.async_configure(
+        second["flow_id"],
+        {
+            CONF_NAME: " orders ",
+            CONF_WEBHOOK_ID: "other-id-01234567",
+            CONF_ALLOWED_CALLERS: [OTHER],
+        },
+    )
+    assert second["errors"] == {CONF_NAME: "name_in_use"}

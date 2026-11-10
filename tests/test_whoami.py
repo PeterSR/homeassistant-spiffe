@@ -29,6 +29,8 @@ async def test_not_found_when_disabled(
     # Even a request that would not verify gets the same answer, so it reveals nothing.
     resp = await client.post(WHOAMI_PATH)
     assert resp.status == 404
+    for method in (client.get, client.put, client.patch, client.delete):
+        assert (await method(WHOAMI_PATH)).status == 404
 
 
 async def test_not_found_without_an_entry(
@@ -53,6 +55,7 @@ async def test_works_when_enabled(
     assert await resp.json() == {"caller": CALLER, "audience": HA_SPIFFE_ID}
 
     assert (await client.post(WHOAMI_PATH)).status == 401
+    assert (await client.get(WHOAMI_PATH)).status == 405
     resp = await client.post(
         WHOAMI_PATH,
         headers={"Authorization": f"Bearer {signer.token(['spiffe://example.org/x'])}"},

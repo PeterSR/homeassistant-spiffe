@@ -6,6 +6,7 @@ from aiohttp import web
 from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigSubentry, ConfigSubentryData
 from homeassistant.core import Event, HomeAssistant
+from homeassistant.util.aiohttp import MockRequest
 from pytest_homeassistant_custom_component.common import async_capture_events
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
@@ -14,6 +15,7 @@ from custom_components.spiffe.const import (
     CONF_ALLOWED_CALLERS,
     CONF_NAME,
     CONF_WEBHOOK_ID,
+    EVENT_BODY_LIMIT_BYTES,
     EVENT_WEBHOOK,
     SUBENTRY_EVENT_WEBHOOK,
 )
@@ -265,3 +267,52 @@ def _make_subentry(webhook_id: str, callers: list[str]):
         title="Second",
         unique_id=webhook_id,
     )
+
+
+async def test_event_webhook_works_with_mock_requests(
+    hass: HomeAssistant, fake_source: FakeSource, signer: Signer
+) -> None:
+    """Cloudhooks and the webhook/handle websocket command hand over a MockRequest."""
+    await setup_spiffe(hass, subentries=[_subentry()])
+    events = async_capture_events(hass, EVENT_WEBHOOK)
+    request = MockRequest(
+        b'{"night": 4}',
+        mock_source="test",
+        method="POST",
+        headers=_bearer(signer),
+    )
+    response = await webhook.async_handle_webhook(hass, WEBHOOK_ID, request)
+    assert response.status == 200
+    await hass.async_block_till_done()
+    assert events[0].data["data"] == {"night": 4}
+
+    bad = MockRequest(b"nope", mock_source="test", method="POST", headers=_bearer(signer))
+    assert (await webhook.async_handle_webhook(hass, WEBHOOK_ID, bad)).status == 400
+
+
+async def test_event_webhook_body_limit(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_source: FakeSource,
+    signer: Signer,
+) -> None:
+    await setup_spiffe(hass, subentries=[_subentry()])
+    events = async_capture_events(hass, EVENT_WEBHOOK)
+    client = await hass_client_no_auth()
+
+    # Declared too large: refused from the header.
+    big = b'"' + b"a" * EVENT_BODY_LIMIT_BYTES + b'"'
+    resp = await client.post(f"/api/webhook/{WEBHOOK_ID}", data=big, headers=_bearer(signer))
+    assert resp.status == 413
+    assert await resp.json() == {"error": "too_large"}
+
+    # No declared length (MockRequest): refused while reading.
+    request = MockRequest(big, mock_source="test", method="POST", headers=_bearer(signer))
+    assert (await webhook.async_handle_webhook(hass, WEBHOOK_ID, request)).status == 413
+
+    # Exactly at the limit is fine.
+    ok = b'"' + b"a" * (EVENT_BODY_LIMIT_BYTES - 2) + b'"'
+    resp = await client.post(f"/api/webhook/{WEBHOOK_ID}", data=ok, headers=_bearer(signer))
+    assert resp.status == 200
+    await hass.async_block_till_done()
+    assert len(events) == 1
