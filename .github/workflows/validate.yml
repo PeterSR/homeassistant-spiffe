@@ -75,7 +75,8 @@ jobs:
           jq -r '.requirements[]' custom_components/spiffe/manifest.json > requirements.txt
           for platform in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
             echo "== ${platform}"
-            uv pip compile requirements.txt -c constraints.txt \
+            # --no-config: the test pins in pyproject.toml target the harness's release, not this one.
+            uv pip compile --no-config requirements.txt -c constraints.txt \
               --python-version 3.14 --python-platform "${platform}" --only-binary :all: \
               --extra-index-url https://wheels.home-assistant.io/musllinux-index/ \
               --index-strategy unsafe-best-match
