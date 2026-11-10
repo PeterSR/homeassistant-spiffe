@@ -1,6 +1,6 @@
 [project]
 name = "homeassistant-spiffe"
-version = "0.1.0"
+version = "0.2.0"
 description = "A SPIFFE identity for Home Assistant, from any SPIFFE Workload API"
 requires-python = ">=3.14.2"
 license = "MIT"

@@ -1,0 +1,36 @@
+http_request:
+  fields:
+    url:
+      required: true
+      example: "https://api.example.org/hook"
+      selector:
+        text:
+          type: url
+    audience:
+      required: true
+      example: "spiffe://example.org/orders/api"
+      selector:
+        text:
+    method:
+      default: POST
+      selector:
+        select:
+          options:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+    json:
+      selector:
+        object:
+    headers:
+      selector:
+        object:
+    timeout:
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: s

@@ -34,3 +34,25 @@ ISSUE_PERMISSION_DENIED: Final = "permission_denied"
 # The Workload API refuses even the trust bundles: it has no identity for Home Assistant at all
 # (for example a SPIRE agent without a registration entry for it).
 ISSUE_NO_IDENTITY: Final = "no_identity"
+
+# Options.
+CONF_SPIFFE_ID: Final = "spiffe_id"
+CONF_EXPOSE_WHOAMI: Final = "expose_whoami"
+
+# Config subentries.
+SUBENTRY_EVENT_WEBHOOK: Final = "event_webhook"
+CONF_NAME: Final = "name"
+CONF_WEBHOOK_ID: Final = "webhook_id"
+CONF_ALLOWED_CALLERS: Final = "allowed_callers"
+
+# Fired by an event webhook for every verified request.
+EVENT_WEBHOOK: Final = "spiffe_webhook"
+
+# The replay cache holds at most this many tokens. A token lives for minutes, so this is far more
+# than a Home Assistant installation sees.
+REPLAY_CACHE_MAX_ENTRIES: Final = 4096
+
+# What the http_request action returns of a response body.
+RESPONSE_LIMIT_BYTES: Final = 64 * 1024
+
+WHOAMI_PATH: Final = "/api/spiffe/whoami"
