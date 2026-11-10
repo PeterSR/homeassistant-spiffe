@@ -112,7 +112,7 @@
           },
           "data_description": {
             "name": "Shown in the event data.",
-            "webhook_id": "Part of the URL, /api/webhook/<ID>. A random one is suggested.",
+            "webhook_id": "The last part of the webhook URL, after /api/webhook/. A random one is suggested.",
             "allowed_callers": "The SPIFFE IDs that may call it, for example spiffe://example.org/orders/api. At least one."
           }
         },
@@ -125,7 +125,7 @@
           },
           "data_description": {
             "name": "Shown in the event data.",
-            "webhook_id": "Part of the URL, /api/webhook/<ID>.",
+            "webhook_id": "The last part of the webhook URL, after /api/webhook/.",
             "allowed_callers": "The SPIFFE IDs that may call it. At least one."
           }
         }
