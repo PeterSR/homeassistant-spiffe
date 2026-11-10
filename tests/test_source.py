@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import socket
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import jwt
 import pytest
 
 from custom_components.spiffe.source import (
@@ -81,6 +83,33 @@ def test_validate_jwt_svid(signer: Signer) -> None:
     token = signer.token({"https://api.example.org"})
     svid = validate_jwt_svid(signer.bundles(), token, "https://api.example.org")
     assert svid.spiffe_id == SPIFFE_ID
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"aud": [{"x": 1}]},
+        {"aud": [1, "aud"]},
+        {"sub": 5},
+        {"exp": "inf"},
+        {"exp": "nan"},
+        {"exp": 10**400},
+    ],
+    ids=["aud_dict", "aud_int", "sub_int", "exp_inf", "exp_nan", "exp_huge"],
+)
+def test_validate_jwt_svid_rejects_crafted_claims(signer: Signer, claims: dict) -> None:
+    """Malformed claims are parsed before the signature check; all must fail the same way."""
+    payload = {"sub": "spiffe://example.org/x", "aud": "aud", "exp": int(time.time()) + 300}
+    payload.update(claims)
+    token = jwt.encode(payload, signer.key, algorithm="ES256", headers={"kid": signer.key_id})
+    with pytest.raises(SpiffeSourceError):
+        validate_jwt_svid(signer.bundles(), token, "aud")
+
+
+@pytest.mark.parametrize("token", [None, 5, b"x", "a.b.c", ""])
+def test_validate_jwt_svid_rejects_non_tokens(signer: Signer, token: object) -> None:
+    with pytest.raises(SpiffeSourceError):
+        validate_jwt_svid(signer.bundles(), token, "aud")  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("case", ["audience", "expired", "other_key", "other_domain", "junk"])

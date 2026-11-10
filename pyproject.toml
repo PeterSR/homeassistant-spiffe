@@ -32,3 +32,12 @@ known-third-party = ["homeassistant"]
 # Not a Python package: this file only pins the test and lint tools.
 package = false
 environments = ["sys_platform == 'linux'"]
+# Test with the versions Home Assistant pins (its package_constraints.txt for the release the test
+# harness targets), not whatever is newest on PyPI.
+constraint-dependencies = [
+    "cffi==2.0.0",
+    "cryptography==50.0.1",
+    "grpcio==1.83.1",
+    "protobuf==7.36.0",
+    "pyjwt==2.15.1",
+]

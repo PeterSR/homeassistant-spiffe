@@ -205,7 +205,12 @@ def validate_jwt_svid(bundles: JwtBundleSet, token: str, audience: str) -> Fetch
                 f"no bundle for trust domain {unverified.spiffe_id.trust_domain}"
             )
         svid = JwtSvid.parse_and_validate(token, bundle, {audience})
-    except PySpiffeError as err:
+    except SpiffeSourceError:
+        raise
+    except (PySpiffeError, TypeError, ValueError, OverflowError, AttributeError) as err:
+        # The claims are parsed before the signature is checked, so anyone can make py-spiffe
+        # raise more than its own errors (a numeric subject, an infinite expiry). All of them
+        # mean the same thing to the caller: not a valid token.
         raise SpiffeSourceError(f"invalid JWT-SVID: {err}") from err
     return FetchedJwtSvid(
         token=svid.token,

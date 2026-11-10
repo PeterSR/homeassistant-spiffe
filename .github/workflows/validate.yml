@@ -40,6 +40,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.14"
+      - name: Check that pyproject.toml and manifest.json pin the same spiffe
+        run: |
+          manifest="$(jq -r '.requirements[] | select(startswith("spiffe=="))' custom_components/spiffe/manifest.json)"
+          grep -qF "\"${manifest}\"" pyproject.toml || { echo "pyproject.toml does not pin ${manifest}" >&2; exit 1; }
       - run: uv sync --group test
       - run: uv run ruff check .
       - run: uv run ruff format --check .

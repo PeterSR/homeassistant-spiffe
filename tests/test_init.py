@@ -201,6 +201,8 @@ async def test_stale_bundles_are_not_trusted(
     await _tick(hass, freezer, int(MAX_BUNDLE_AGE / HEALTH_INTERVAL) + 1)
     with pytest.raises(SpiffeError, match="not been refreshed"):
         await async_validate_jwt_svid(hass, token, "aud")
+    with pytest.raises(SpiffeError, match="not been refreshed"):
+        await async_get_jwt_bundles(hass)
 
     fake_source.reachable = True
     await _tick(hass, freezer)
@@ -265,3 +267,15 @@ async def test_token_never_logged(
     assert token not in caplog.text
     for part in token.split("."):
         assert part not in caplog.text
+
+
+async def test_setup_failure_after_connecting_closes(
+    hass: HomeAssistant, fake_source: FakeSource
+) -> None:
+    with patch(
+        "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+        side_effect=RuntimeError("platform failed"),
+    ):
+        entry = await _setup(hass)
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert fake_source.closed

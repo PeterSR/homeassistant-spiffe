@@ -106,7 +106,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpiffeConfigEntry) -> bo
     entry.async_on_unload(async_track_time_interval(hass, _async_check, HEALTH_INTERVAL))
     ir.async_delete_issue(hass, DOMAIN, ISSUE_UNREACHABLE)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except BaseException:
+        # Unload is not called for a setup that failed, so close the connection here.
+        await coordinator.async_shutdown()
+        await hass.async_add_executor_job(source.close)
+        raise
     return True
 
 
@@ -168,10 +174,22 @@ async def async_fetch_jwt_svid(
 async def async_get_jwt_bundles(hass: HomeAssistant) -> JwtBundleSet:
     """Return a copy of the JWT bundles from the latest successful check.
 
-    They are refreshed every minute while the Workload API answers.
+    They are refreshed every minute while the Workload API answers. Raises SpiffeError when they
+    could not be refreshed for a while, as validation does.
     """
-    bundles = _coordinator(hass).bundles
+    coordinator = _coordinator(hass)
+    _check_bundle_age(coordinator)
+    bundles = coordinator.bundles
     return JwtBundleSet({b.trust_domain: b for b in bundles.bundles})
+
+
+def _check_bundle_age(coordinator: SpiffeCoordinator) -> None:
+    age = dt_util.utcnow() - coordinator.bundles_fetched_at
+    if age > MAX_BUNDLE_AGE:
+        raise SpiffeError(
+            f"The trust bundles have not been refreshed for {int(age.total_seconds() // 60)}"
+            " minutes; not using them"
+        )
 
 
 async def async_validate_jwt_svid(hass: HomeAssistant, token: str, audience: str) -> str:
@@ -186,12 +204,7 @@ async def async_validate_jwt_svid(hass: HomeAssistant, token: str, audience: str
     coordinator = _coordinator(hass)
     if not isinstance(audience, str) or not audience.strip():
         raise ValueError("the audience must be a non-empty string")
-    age = dt_util.utcnow() - coordinator.bundles_fetched_at
-    if age > MAX_BUNDLE_AGE:
-        raise SpiffeError(
-            f"The trust bundles have not been refreshed for {int(age.total_seconds() // 60)}"
-            " minutes; not validating against them"
-        )
+    _check_bundle_age(coordinator)
     try:
         svid = await hass.async_add_executor_job(
             validate_jwt_svid, coordinator.bundles, token, audience
