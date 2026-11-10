@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from unittest.mock import patch
+
 import aiohttp
 import pytest
+from aiohttp import web
 from homeassistant.auth.models import User
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
@@ -223,8 +227,8 @@ async def test_error_messages_use_translation_and_hide_credentials(
     hass: HomeAssistant, fake_source: FakeSource, aioclient_mock: AiohttpClientMocker
 ) -> None:
     await setup_spiffe(hass)
-    url = "https://user:secret@api.example.org:8443/hook"
-    aioclient_mock.post(url, exc=aiohttp.ClientConnectionError(f"cannot reach {url}"))
+    url = "https://api.example.org:8443/hook"
+    aioclient_mock.post(url, exc=aiohttp.ClientConnectionError("cannot reach, secret detail"))
     with pytest.raises(HomeAssistantError) as err:
         await _call(hass, {"url": url})
     assert err.value.translation_key == "request_failed"
@@ -240,3 +244,66 @@ async def test_error_messages_use_translation_and_hide_credentials(
     with pytest.raises(ServiceValidationError) as auth:
         await _call(hass, {"headers": {"authorization": "x"}})
     assert auth.value.translation_key == "authorization_header"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://user:secret@api.example.org/x",
+        "http://user@api.example.org/x",
+        "http://@api.example.org/x",
+        "https://api.example.org:notaport/x",
+    ],
+)
+async def test_refuses_urls_with_credentials_or_bad_ports(
+    hass: HomeAssistant,
+    fake_source: FakeSource,
+    aioclient_mock: AiohttpClientMocker,
+    url: str,
+) -> None:
+    await setup_spiffe(hass)
+    with pytest.raises(ServiceValidationError) as err:
+        await _call(hass, {"url": url})
+    assert err.value.translation_key == "invalid_url"
+    assert aioclient_mock.call_count == 0
+
+
+async def test_json_that_is_too_deep_falls_back_to_text(
+    hass: HomeAssistant, fake_source: FakeSource, aioclient_mock: AiohttpClientMocker
+) -> None:
+    await setup_spiffe(hass)
+    aioclient_mock.post(URL, text="[[[]]]", headers=JSON)
+    # What Python does with deep nesting depends on the version, so provoke the error directly.
+    with patch("custom_components.spiffe.services.json.loads", side_effect=RecursionError):
+        result = await _call(hass, {})
+    assert result == {"status": 200, "text": "[[[]]]"}
+
+
+async def test_against_a_real_server(
+    hass: HomeAssistant, fake_source: FakeSource, aiohttp_server, socket_enabled: None
+) -> None:
+    """The mocked session hides what aiohttp itself does, so talk to a real one too."""
+    seen: dict[str, str] = {}
+
+    async def handler(request: web.Request) -> web.Response:
+        seen["auth"] = request.headers["Authorization"]
+        seen["ua"] = request.headers.get("User-Agent", "")
+        seen["body"] = await request.text()
+        return web.json_response({"echo": True})
+
+    app = web.Application()
+    app.router.add_post("/hook", handler)
+    server = await aiohttp_server(app)
+    await setup_spiffe(hass)
+    base = f"http://127.0.0.1:{server.port}"
+
+    result = await _call(hass, {"url": f"{base}/hook", "json": {"a": 1}})
+    assert result == {"status": 200, "json": {"echo": True}}
+    assert seen["auth"].startswith("Bearer ")
+    assert seen["ua"]
+    assert json.loads(seen["body"]) == {"a": 1}
+
+    with pytest.raises(ServiceValidationError):
+        await _call(hass, {"url": f"http://user:pw@127.0.0.1:{server.port}/hook"})
+    missing = await _call(hass, {"url": f"{base}/missing"})
+    assert missing["status"] == 405 or missing["status"] == 404  # an answer, not an error

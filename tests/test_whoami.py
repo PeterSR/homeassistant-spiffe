@@ -12,6 +12,7 @@ from custom_components.spiffe.const import (
     CONF_SPIFFE_ID,
     WHOAMI_PATH,
 )
+from custom_components.spiffe.replay import DATA_REPLAY_CACHE
 
 from .conftest import CALLER, HA_SPIFFE_ID, FakeSource, Signer
 from .test_verify import setup_spiffe
@@ -34,7 +35,7 @@ async def test_not_found_when_disabled(
     # Even a request that would not verify gets the same answer, so it reveals nothing.
     resp = await client.post(WHOAMI_PATH)
     assert resp.status == 404
-    for method in (client.get, client.put, client.patch, client.delete):
+    for method in (client.get, client.head, client.put, client.patch, client.delete):
         assert (await method(WHOAMI_PATH)).status == 404
 
 
@@ -81,26 +82,6 @@ async def test_does_not_consume_tokens_by_default(
     assert (await client.post(WHOAMI_PATH, headers=headers)).status == 200
 
 
-async def test_single_use_is_refused(
-    hass: HomeAssistant,
-    hass_client_no_auth: ClientSessionGenerator,
-    fake_source: FakeSource,
-    signer: Signer,
-) -> None:
-    await setup_spiffe(
-        hass,
-        options={
-            CONF_SPIFFE_ID: HA_SPIFFE_ID,
-            CONF_EXPOSE_WHOAMI: True,
-            CONF_SINGLE_USE_TOKENS: True,
-        },
-    )
-    client = await hass_client_no_auth()
-    headers = _bearer(signer)
-    assert (await client.post(WHOAMI_PATH, headers=headers)).status == 200
-    assert (await client.post(WHOAMI_PATH, headers=headers)).status == 401
-
-
 async def test_unavailable_without_spiffe_id(
     hass: HomeAssistant,
     hass_client_no_auth: ClientSessionGenerator,
@@ -128,3 +109,24 @@ async def test_toggle_takes_effect_without_reload(
     )
     await hass.async_block_till_done()
     assert (await client.post(WHOAMI_PATH, headers=_bearer(signer))).status == 200
+
+
+async def test_whoami_never_touches_the_single_use_memory(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_source: FakeSource,
+    signer: Signer,
+) -> None:
+    await setup_spiffe(
+        hass,
+        options={
+            CONF_SPIFFE_ID: HA_SPIFFE_ID,
+            CONF_EXPOSE_WHOAMI: True,
+            CONF_SINGLE_USE_TOKENS: True,
+        },
+    )
+    client = await hass_client_no_auth()
+    headers = _bearer(signer)
+    assert (await client.post(WHOAMI_PATH, headers=headers)).status == 200
+    assert (await client.post(WHOAMI_PATH, headers=headers)).status == 200
+    assert DATA_REPLAY_CACHE not in hass.data

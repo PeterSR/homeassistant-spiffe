@@ -6,6 +6,8 @@ from aiohttp import web
 from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigSubentry, ConfigSubentryData
 from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.setup import async_setup_component
 from homeassistant.util.aiohttp import MockRequest
 from pytest_homeassistant_custom_component.common import async_capture_events
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
@@ -15,6 +17,7 @@ from custom_components.spiffe.const import (
     CONF_ALLOWED_CALLERS,
     CONF_NAME,
     CONF_WEBHOOK_ID,
+    DOMAIN,
     EVENT_BODY_LIMIT_BYTES,
     EVENT_WEBHOOK,
     SUBENTRY_EVENT_WEBHOOK,
@@ -250,6 +253,33 @@ async def test_event_webhook_unregistered_on_unload_and_follows_subentries(
     )
     await hass.async_block_till_done()
     assert events == []
+
+
+async def test_id_collision_raises_an_issue_and_is_cleared(
+    hass: HomeAssistant, fake_source: FakeSource, caplog
+) -> None:
+    await async_setup_component(hass, "webhook", {})
+    webhook.async_register(hass, "other", "Other", WEBHOOK_ID, lambda *a: None)
+    entry = await setup_spiffe(hass, subentries=[_subentry()])
+    issues = ir.async_get(hass)
+    (subentry,) = entry.subentries.values()
+    issue_id = f"webhook_id_in_use_{subentry.subentry_id}"
+    assert issues.async_get_issue(DOMAIN, issue_id)
+    assert "already in use" in caplog.text
+
+    webhook.async_unregister(hass, WEBHOOK_ID)
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert not issues.async_get_issue(DOMAIN, issue_id)
+
+
+async def test_bad_allowed_callers_are_logged_as_such(
+    hass: HomeAssistant, fake_source: FakeSource, caplog
+) -> None:
+    bad = _subentry(callers=["not-a-spiffe-id"])
+    await setup_spiffe(hass, subentries=[bad])
+    assert "bad allowed callers" in caplog.text
+    assert "already in use" not in caplog.text
 
 
 async def test_options_change_does_not_reload(hass: HomeAssistant, fake_source: FakeSource) -> None:

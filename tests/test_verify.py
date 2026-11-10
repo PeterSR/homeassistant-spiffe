@@ -82,7 +82,9 @@ async def test_bearer_scheme_is_case_insensitive(
     assert await async_verify_request(hass, request, allowed_callers=[CALLER]) == CALLER
 
 
-@pytest.mark.parametrize("header", [None, "", "Bearer", "Bearer ", "Basic abc", "Bearer not.a.jwt"])
+@pytest.mark.parametrize(
+    "header", [None, "", "Bearer", "Bearer ", "Bearer    ", "Basic abc", "Bearer not.a.jwt"]
+)
 async def test_missing_or_garbage_bearer(
     hass: HomeAssistant, fake_source: FakeSource, header: str | None
 ) -> None:
@@ -305,3 +307,24 @@ async def test_cache_lives_in_hass_data(
     token = signer.token([HA_SPIFFE_ID], subject=CALLER)
     await async_verify_request(hass, _request(token), allowed_callers=[CALLER])
     assert len(hass.data[DATA_REPLAY_CACHE]) == 1
+
+
+async def test_flood_warning_is_throttled(
+    hass: HomeAssistant,
+    hass_client_no_auth,
+    fake_source: FakeSource,
+    signer: Signer,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def handler(hass, webhook_id, request, caller):
+        return None
+
+    await setup_spiffe(hass, options=SINGLE_USE)
+    hass.data[DATA_REPLAY_CACHE] = ReplayCache(max_entries=0)
+    async_register_verified_webhook(hass, "t", "Flood", "flood", handler, allowed_callers=[CALLER])
+    client = await hass_client_no_auth()
+    for _ in range(5):
+        token = signer.token([HA_SPIFFE_ID], subject=CALLER)
+        resp = await client.post("/api/webhook/flood", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status == 503
+    assert sum("cannot verify requests" in r.message for r in caplog.records) == 1

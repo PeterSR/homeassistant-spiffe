@@ -249,6 +249,8 @@ async def test_cached_tokens(
 
     first = await async_fetch_jwt_svid(hass, me)
     second = await async_fetch_jwt_svid(hass, me)
+    # A deliberate canary: if spiffex stops caching tokens, this fails and the README's advice on
+    # single-use mode (and this test) needs revisiting.
     assert first == second
 
     assert await async_verify_request(hass, _request(first), allowed_callers=[caller]) == caller
