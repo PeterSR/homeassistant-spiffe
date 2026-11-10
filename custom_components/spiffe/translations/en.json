@@ -69,5 +69,111 @@
       "title": "The SPIFFE Workload API has no identity for Home Assistant",
       "description": "The Workload API answers, but refuses to give Home Assistant anything, not even the trust bundles. Usually Home Assistant has not been registered (admitted) with your SPIFFE implementation yet. Home Assistant keeps retrying.\n\nThe error was: {error}"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Home Assistant's SPIFFE identity",
+        "description": "Set Home Assistant's own SPIFFE ID to let other workloads call it with a JWT-SVID. It is the audience every incoming token must name. While it is empty, incoming requests are answered with 503.",
+        "data": {
+          "spiffe_id": "Home Assistant's SPIFFE ID",
+          "expose_whoami": "Offer the whoami endpoint"
+        },
+        "data_description": {
+          "spiffe_id": "For example spiffe://example.org/ha/core. Leave empty to not accept incoming requests.",
+          "expose_whoami": "Lets a workload POST its token to /api/spiffe/whoami and be told who Home Assistant sees. Handy for checking a setup, off by default."
+        }
+      }
+    },
+    "error": {
+      "invalid_spiffe_id": "This is not a valid SPIFFE ID. Use spiffe://trust-domain/path."
+    }
+  },
+  "config_subentries": {
+    "event_webhook": {
+      "initiate_flow": {
+        "user": "Add event webhook"
+      },
+      "entry_type": "Event webhook",
+      "step": {
+        "user": {
+          "title": "Add an event webhook",
+          "description": "A webhook that only answers workloads presenting a JWT-SVID from one of the allowed callers. Each verified request fires a spiffe_webhook event.",
+          "data": {
+            "name": "Name",
+            "webhook_id": "Webhook ID",
+            "allowed_callers": "Allowed callers"
+          },
+          "data_description": {
+            "name": "Shown in the event data.",
+            "webhook_id": "Part of the URL, /api/webhook/<ID>. A random one is suggested.",
+            "allowed_callers": "The SPIFFE IDs that may call it, for example spiffe://example.org/orders/api. At least one."
+          }
+        },
+        "reconfigure": {
+          "title": "Change the event webhook",
+          "data": {
+            "name": "Name",
+            "webhook_id": "Webhook ID",
+            "allowed_callers": "Allowed callers"
+          },
+          "data_description": {
+            "name": "Shown in the event data.",
+            "webhook_id": "Part of the URL, /api/webhook/<ID>.",
+            "allowed_callers": "The SPIFFE IDs that may call it. At least one."
+          }
+        }
+      },
+      "error": {
+        "name_required": "Give it a name.",
+        "invalid_webhook_id": "Use 8 to 128 letters, digits, dashes or underscores.",
+        "webhook_id_in_use": "Another event webhook already uses this ID.",
+        "invalid_spiffe_id": "One of the callers is not a valid SPIFFE ID. Use spiffe://trust-domain/path.",
+        "callers_required": "Allow at least one caller."
+      },
+      "abort": {
+        "reconfigure_successful": "The event webhook was changed."
+      }
+    }
+  },
+  "services": {
+    "http_request": {
+      "name": "HTTP request with a JWT-SVID",
+      "description": "Calls a URL with Home Assistant's identity as a bearer token for the audience you name. Administrators only, because the token goes to whatever server the URL points at.",
+      "fields": {
+        "url": {
+          "name": "URL",
+          "description": "An http or https URL."
+        },
+        "audience": {
+          "name": "Audience",
+          "description": "The SPIFFE ID of the service you are calling, such as spiffe://example.org/orders/api."
+        },
+        "method": {
+          "name": "Method",
+          "description": "The HTTP method."
+        },
+        "json": {
+          "name": "JSON body",
+          "description": "An object to send as the JSON body."
+        },
+        "headers": {
+          "name": "Headers",
+          "description": "Extra headers. Authorization cannot be set."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Seconds to wait for the whole request."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "invalid_url": {
+      "message": "The URL must be an http or https URL."
+    },
+    "authorization_header": {
+      "message": "The Authorization header is set by this action and cannot be overridden."
+    }
   }
 }
