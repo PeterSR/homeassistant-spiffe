@@ -30,6 +30,7 @@ from custom_components.spiffe.const import (
     DEFAULT_SOCKET,
     DOMAIN,
     HEALTH_INTERVAL,
+    ISSUE_NO_IDENTITY,
     ISSUE_PERMISSION_DENIED,
     ISSUE_UNREACHABLE,
     MAX_BUNDLE_AGE,
@@ -279,3 +280,28 @@ async def test_setup_failure_after_connecting_closes(
         entry = await _setup(hass)
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert fake_source.closed
+
+
+async def test_no_identity_at_setup(hass: HomeAssistant, fake_source: FakeSource) -> None:
+    """A Workload API that refuses even the bundles (SPIRE without a registration)."""
+    fake_source.bundles_denied = True
+    entry = await _setup(hass)
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    issues = ir.async_get(hass)
+    assert issues.async_get_issue(DOMAIN, ISSUE_NO_IDENTITY)
+    assert not issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)
+
+
+async def test_no_identity_later_is_not_unreachable(
+    hass: HomeAssistant, fake_source: FakeSource, freezer: FrozenDateTimeFactory
+) -> None:
+    await _setup(hass)
+    issues = ir.async_get(hass)
+    fake_source.bundles_denied = True
+    await _tick(hass, freezer, 7)
+    assert issues.async_get_issue(DOMAIN, ISSUE_NO_IDENTITY)
+    assert not issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)
+
+    fake_source.bundles_denied = False
+    await _tick(hass, freezer)
+    assert not issues.async_get_issue(DOMAIN, ISSUE_NO_IDENTITY)

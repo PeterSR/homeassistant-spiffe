@@ -24,7 +24,8 @@
     "error": {
       "invalid_socket": "This is not a valid address. Use unix:///absolute/path/to/agent.sock.",
       "socket_missing": "There is no socket at this path yet. Start the agent first, then try again.",
-      "cannot_connect": "The socket exists but the Workload API did not answer. Check that the agent is running and can reach its issuer."
+      "cannot_connect": "The socket exists but the Workload API did not answer. Check that the agent is running and can reach its issuer.",
+      "no_identity": "The Workload API answers, but has no identity for Home Assistant. Register (admit) Home Assistant with your SPIFFE implementation, then try again."
     },
     "abort": {
       "already_configured": "SPIFFE is already set up.",
@@ -63,6 +64,10 @@
     "permission_denied": {
       "title": "Home Assistant was refused a SPIFFE token",
       "description": "An integration asked for a JWT-SVID, and the Workload API refused it. Usually Home Assistant has not been admitted (registered) at the issuer yet, or the issuer does not allow the audience that was requested.\n\nThe error was: {error}"
+    },
+    "no_identity": {
+      "title": "The SPIFFE Workload API has no identity for Home Assistant",
+      "description": "The Workload API answers, but refuses to give Home Assistant anything, not even the trust bundles. Usually Home Assistant has not been registered (admitted) with your SPIFFE implementation yet. Home Assistant keeps retrying.\n\nThe error was: {error}"
     }
   }
 }

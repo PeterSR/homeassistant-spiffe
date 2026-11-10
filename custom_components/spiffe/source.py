@@ -151,11 +151,10 @@ class WorkloadApiSource(SpiffeSource):
             svid: JwtSvid = self._client.fetch_jwt_svid(audience=wanted, subject=spiffe_subject)
         except PySpiffeError as err:
             raise _unavailable(err) from err
-        return FetchedJwtSvid(
-            token=svid.token,
-            spiffe_id=str(svid.spiffe_id),
-            expiry=datetime.fromtimestamp(svid.expiry, tz=UTC),
-        )
+        try:
+            return _fetched(svid)
+        except (TypeError, ValueError, OverflowError) as err:
+            raise SourceUnavailableError(f"the agent returned an unusable JWT-SVID: {err}") from err
 
     def fetch_jwt_bundles(self) -> JwtBundleSet:
         try:
@@ -205,6 +204,7 @@ def validate_jwt_svid(bundles: JwtBundleSet, token: str, audience: str) -> Fetch
                 f"no bundle for trust domain {unverified.spiffe_id.trust_domain}"
             )
         svid = JwtSvid.parse_and_validate(token, bundle, {audience})
+        return _fetched(svid)
     except SpiffeSourceError:
         raise
     except (PySpiffeError, TypeError, ValueError, OverflowError, AttributeError) as err:
@@ -212,6 +212,10 @@ def validate_jwt_svid(bundles: JwtBundleSet, token: str, audience: str) -> Fetch
         # raise more than its own errors (a numeric subject, an infinite expiry). All of them
         # mean the same thing to the caller: not a valid token.
         raise SpiffeSourceError(f"invalid JWT-SVID: {err}") from err
+
+
+def _fetched(svid: JwtSvid) -> FetchedJwtSvid:
+    # A signed `exp` can still be a numeric string or far outside datetime's range.
     return FetchedJwtSvid(
         token=svid.token,
         spiffe_id=str(svid.spiffe_id),

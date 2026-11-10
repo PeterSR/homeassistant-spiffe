@@ -51,7 +51,7 @@ class SpiffeConfigFlow(ConfigFlow, domain=DOMAIN):
             errors[CONF_SOCKET] = "socket_missing"
         except SourceUnavailableError as err:
             _LOGGER.debug("Workload API at %s did not answer: %s", uri, err)
-            errors["base"] = "cannot_connect"
+            errors["base"] = "no_identity" if err.permission_denied else "cannot_connect"
         return errors
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

@@ -34,11 +34,12 @@ from .const import (
     CONF_SOCKET,
     DOMAIN,
     HEALTH_INTERVAL,
+    ISSUE_NO_IDENTITY,
     ISSUE_PERMISSION_DENIED,
     ISSUE_UNREACHABLE,
     MAX_BUNDLE_AGE,
 )
-from .coordinator import SpiffeConfigEntry, SpiffeCoordinator
+from .coordinator import SpiffeConfigEntry, SpiffeCoordinator, async_raise_no_identity
 from .source import (
     AudienceNotAvailableError,
     InvalidSocketError,
@@ -90,6 +91,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpiffeConfigEntry) -> bo
         x509 = await hass.async_add_executor_job(source.x509_available)
     except SourceUnavailableError as err:
         await hass.async_add_executor_job(source.close)
+        if err.permission_denied:
+            async_raise_no_identity(hass, str(err))
         raise ConfigEntryNotReady(f"The SPIFFE Workload API is not ready: {err}") from err
     except BaseException:
         await hass.async_add_executor_job(source.close)
@@ -105,6 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpiffeConfigEntry) -> bo
 
     entry.async_on_unload(async_track_time_interval(hass, _async_check, HEALTH_INTERVAL))
     ir.async_delete_issue(hass, DOMAIN, ISSUE_UNREACHABLE)
+    ir.async_delete_issue(hass, DOMAIN, ISSUE_NO_IDENTITY)
 
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -133,7 +137,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: SpiffeConfigEntry) -> N
 
 
 def _delete_issues(hass: HomeAssistant) -> None:
-    for issue in (ISSUE_UNREACHABLE, ISSUE_PERMISSION_DENIED):
+    for issue in (ISSUE_UNREACHABLE, ISSUE_PERMISSION_DENIED, ISSUE_NO_IDENTITY):
         ir.async_delete_issue(hass, DOMAIN, issue)
 
 

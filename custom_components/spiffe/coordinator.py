@@ -17,6 +17,7 @@ from spiffe import JwtBundleSet
 from .const import (
     CONF_SOCKET,
     DOMAIN,
+    ISSUE_NO_IDENTITY,
     ISSUE_PERMISSION_DENIED,
     ISSUE_UNREACHABLE,
     UNREACHABLE_GRACE,
@@ -86,7 +87,13 @@ class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
         try:
             bundles = await self.hass.async_add_executor_job(self.source.fetch_jwt_bundles)
         except SourceUnavailableError as err:
-            self._note_failure(str(err))
+            if err.permission_denied:
+                # It answers, but has no identity for us: a different problem from not answering.
+                self.note_no_identity(str(err))
+                self._failing_since = None
+                ir.async_delete_issue(self.hass, DOMAIN, ISSUE_UNREACHABLE)
+            else:
+                self._note_failure(str(err))
             return self._health(reachable=False)
         self.bundles = bundles
         self.bundles_fetched_at = dt_util.utcnow()
@@ -117,6 +124,11 @@ class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
             _LOGGER.info("The SPIFFE Workload API is answering again")
         self._failing_since = None
         ir.async_delete_issue(self.hass, DOMAIN, ISSUE_UNREACHABLE)
+        ir.async_delete_issue(self.hass, DOMAIN, ISSUE_NO_IDENTITY)
+
+    def note_no_identity(self, error: str) -> None:
+        """Raise a repair issue: the source refuses even the bundles to Home Assistant."""
+        async_raise_no_identity(self.hass, error)
 
     def note_svid_fetched(self) -> None:
         """Record a successful JWT-SVID fetch.
@@ -138,3 +150,16 @@ class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
             translation_key=ISSUE_PERMISSION_DENIED,
             translation_placeholders={"error": error},
         )
+
+
+def async_raise_no_identity(hass: HomeAssistant, error: str) -> None:
+    """Raise the repair issue for a Workload API that has no identity for Home Assistant."""
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        ISSUE_NO_IDENTITY,
+        is_fixable=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key=ISSUE_NO_IDENTITY,
+        translation_placeholders={"error": error},
+    )

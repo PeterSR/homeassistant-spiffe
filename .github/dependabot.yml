@@ -11,7 +11,9 @@ updates:
     ignore:
       # Pinned in manifest.json too, and Home Assistant installs that one. Bump both by hand.
       - dependency-name: spiffe
-      # Pinned to match Home Assistant's package constraints.
+      # Pinned to match Home Assistant's package constraints, and the test harness pins Home
+      # Assistant itself: bump these together by hand.
+      - dependency-name: pytest-homeassistant-custom-component
       - dependency-name: cffi
       - dependency-name: cryptography
       - dependency-name: grpcio

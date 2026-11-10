@@ -129,3 +129,14 @@ async def test_reconfigure(hass: HomeAssistant, fake_source: FakeSource) -> None
     await hass.async_block_till_done()
     # The reload connected to the new address.
     assert fake_source.uris[-1] == "unix:///share/spiffe/agent.sock"
+
+
+async def test_user_flow_no_identity(hass: HomeAssistant, fake_source: FakeSource) -> None:
+    fake_source.bundles_denied = True
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SOCKET: DEFAULT_SOCKET}
+    )
+    assert result["errors"] == {"base": "no_identity"}

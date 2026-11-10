@@ -31,3 +31,6 @@ UNREACHABLE_GRACE: Final = timedelta(minutes=5)
 
 ISSUE_UNREACHABLE: Final = "workload_api_unreachable"
 ISSUE_PERMISSION_DENIED: Final = "permission_denied"
+# The Workload API refuses even the trust bundles: it has no identity for Home Assistant at all
+# (for example a SPIRE agent without a registration entry for it).
+ISSUE_NO_IDENTITY: Final = "no_identity"

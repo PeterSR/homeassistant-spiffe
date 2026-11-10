@@ -68,6 +68,7 @@ class FakeSource(SpiffeSource):
         self.signer = signer
         self.reachable = True
         self.permission_denied = False
+        self.bundles_denied = False
         self.x509 = False
         self.closed = False
         self.close_calls = 0
@@ -99,6 +100,10 @@ class FakeSource(SpiffeSource):
 
     def fetch_jwt_bundles(self) -> JwtBundleSet:
         self._check()
+        if self.bundles_denied:
+            raise SourceUnavailableError(
+                "no identity issued (StatusCode.PERMISSION_DENIED)", permission_denied=True
+            )
         return self.signer.bundles()
 
     def x509_available(self) -> bool:

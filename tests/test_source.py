@@ -94,8 +94,10 @@ def test_validate_jwt_svid(signer: Signer) -> None:
         {"exp": "inf"},
         {"exp": "nan"},
         {"exp": 10**400},
+        {"exp": str(int(time.time()) + 300)},
+        {"exp": 10**15},
     ],
-    ids=["aud_dict", "aud_int", "sub_int", "exp_inf", "exp_nan", "exp_huge"],
+    ids=["aud_dict", "aud_int", "sub_int", "exp_inf", "exp_nan", "exp_huge", "exp_str", "exp_year"],
 )
 def test_validate_jwt_svid_rejects_crafted_claims(signer: Signer, claims: dict) -> None:
     """Malformed claims are parsed before the signature check; all must fail the same way."""
