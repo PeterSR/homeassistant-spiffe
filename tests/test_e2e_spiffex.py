@@ -20,7 +20,16 @@ from pathlib import Path
 
 import pytest
 import pytest_socket
+from aiohttp.test_utils import make_mocked_request
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.spiffe import (
+    SpiffeAuthError,
+    async_fetch_jwt_svid,
+    async_verify_request,
+)
+from custom_components.spiffe.const import CONF_SOCKET, CONF_SPIFFE_ID, DOMAIN
 from custom_components.spiffe.source import (
     SourceUnavailableError,
     WorkloadApiSource,
@@ -177,3 +186,37 @@ def test_agent_stopped(agent_socket: tuple[str, bool, subprocess.Popen[bytes]]) 
             source.fetch_jwt_bundles()
     finally:
         source.close()
+
+
+async def test_verify_request(
+    hass: HomeAssistant, agent_socket: tuple[str, bool, subprocess.Popen[bytes]]
+) -> None:
+    """A token the agent minted verifies, once, for the caller it names."""
+    uri, _, _ = agent_socket
+    me = "spiffe://spiffex.test/dev/billing"
+    caller = "spiffe://spiffex.test/dev/orders"  # the identity the agent hands out
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_SOCKET: uri}, options={CONF_SPIFFE_ID: me})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    def request(token: str):
+        return make_mocked_request("POST", "/", headers={"Authorization": f"Bearer {token}"})
+
+    token = await async_fetch_jwt_svid(hass, me)
+    assert await async_verify_request(hass, request(token), allowed_callers=[caller]) == caller
+    with pytest.raises(SpiffeAuthError) as replayed:
+        await async_verify_request(hass, request(token), allowed_callers=[caller])
+    assert replayed.value.status == 401
+
+    other = await async_fetch_jwt_svid(hass, me)
+    with pytest.raises(SpiffeAuthError) as refused:
+        await async_verify_request(hass, request(other), allowed_callers=[me])
+    assert refused.value.status == 403
+
+    wrong_audience = await async_fetch_jwt_svid(hass, "spiffe://spiffex.test/dev/elsewhere")
+    with pytest.raises(SpiffeAuthError) as wrong:
+        await async_verify_request(hass, request(wrong_audience), allowed_callers=[caller])
+    assert wrong.value.status == 401
+
+    assert await hass.config_entries.async_unload(entry.entry_id)

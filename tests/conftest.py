@@ -137,3 +137,8 @@ def fake_source(signer: Signer) -> Generator[FakeSource]:
         patch("custom_components.spiffe.config_flow.WorkloadApiSource", side_effect=build),
     ):
         yield source
+
+
+HA_SPIFFE_ID = "spiffe://example.org/ha/core"
+CALLER = "spiffe://example.org/orders/api"
+OTHER = "spiffe://example.org/billing/api"
