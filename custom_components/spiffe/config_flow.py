@@ -29,6 +29,7 @@ from .const import (
     CONF_ALLOWED_CALLERS,
     CONF_EXPOSE_WHOAMI,
     CONF_NAME,
+    CONF_SINGLE_USE_TOKENS,
     CONF_SOCKET,
     CONF_SPIFFE_ID,
     CONF_WEBHOOK_ID,
@@ -136,7 +137,10 @@ class SpiffeOptionsFlow(OptionsFlow):
         options = self.config_entry.options
         if user_input is not None:
             spiffe_id = user_input.get(CONF_SPIFFE_ID, "").strip()
-            result: dict[str, Any] = {CONF_EXPOSE_WHOAMI: user_input[CONF_EXPOSE_WHOAMI]}
+            result: dict[str, Any] = {
+                CONF_EXPOSE_WHOAMI: user_input[CONF_EXPOSE_WHOAMI],
+                CONF_SINGLE_USE_TOKENS: user_input[CONF_SINGLE_USE_TOKENS],
+            }
             if spiffe_id:
                 try:
                     result[CONF_SPIFFE_ID] = normalize_spiffe_id(spiffe_id)
@@ -152,6 +156,10 @@ class SpiffeOptionsFlow(OptionsFlow):
                 ): str,
                 vol.Required(
                     CONF_EXPOSE_WHOAMI, default=bool(current.get(CONF_EXPOSE_WHOAMI, False))
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_SINGLE_USE_TOKENS,
+                    default=bool(current.get(CONF_SINGLE_USE_TOKENS, False)),
                 ): BooleanSelector(),
             }
         )

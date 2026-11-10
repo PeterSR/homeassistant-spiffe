@@ -38,6 +38,7 @@ ISSUE_NO_IDENTITY: Final = "no_identity"
 # Options.
 CONF_SPIFFE_ID: Final = "spiffe_id"
 CONF_EXPOSE_WHOAMI: Final = "expose_whoami"
+CONF_SINGLE_USE_TOKENS: Final = "single_use_tokens"
 
 # Config subentries.
 SUBENTRY_EVENT_WEBHOOK: Final = "event_webhook"

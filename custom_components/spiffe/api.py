@@ -17,7 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from spiffe import JwtBundleSet
 
-from .const import CONF_SPIFFE_ID, DOMAIN, MAX_BUNDLE_AGE
+from .const import CONF_SINGLE_USE_TOKENS, CONF_SPIFFE_ID, DOMAIN, MAX_BUNDLE_AGE
 from .coordinator import SpiffeCoordinator
 from .errors import SpiffeAuthError, SpiffeError, SpiffeNotReady
 from .ids import normalize_spiffe_id
@@ -138,8 +138,9 @@ async def async_verify_request(
     own SPIFFE ID (the `spiffe_id` option of the integration), and whose subject is one of
     `allowed_callers` (a collection of SPIFFE IDs; a bare string raises TypeError, an invalid ID
     ValueError). The audience must be exactly that one SPIFFE ID, not a list with other services
-    next to it. An empty `allowed_callers` admits nobody. A token is accepted once: replaying
-    it, on this or any other verified endpoint, fails.
+    next to it. An empty `allowed_callers` admits nobody. With the option `single_use_tokens` on,
+    a token is accepted once: replaying it, on this or any other verified endpoint, fails. It is
+    off by default, because agents that cache tokens hand out the same one for repeated fetches.
 
     Raises SpiffeAuthError with status 401 (no, invalid, expired or replayed token) or 403 (a valid
     caller that is not allowed), and SpiffeNotReady when the integration is not loaded or has no
@@ -202,6 +203,12 @@ async def _async_verify(
 
     if allowed_callers is not None and svid.spiffe_id not in allowed_callers:
         raise SpiffeAuthError(403, f"caller {svid.spiffe_id} is not allowed")
+
+    if not coordinator.config_entry.options.get(CONF_SINGLE_USE_TOKENS):
+        # Tokens are bearer tokens, valid until they expire. Agents such as SPIRE and spiffex hand
+        # out the same token for repeated fetches, so refusing a second use would refuse honest
+        # callers.
+        return svid.spiffe_id
 
     # Nothing awaits between the check and the record, so two requests with the same token cannot
     # both get through.
