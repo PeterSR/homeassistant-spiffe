@@ -19,6 +19,7 @@ from custom_components.spiffe import (
     async_verify_request,
 )
 from custom_components.spiffe.const import (
+    CONF_SINGLE_USE_TOKENS,
     CONF_SOCKET,
     CONF_SPIFFE_ID,
     DEFAULT_SOCKET,
@@ -28,6 +29,8 @@ from custom_components.spiffe.const import (
 from custom_components.spiffe.replay import DATA_REPLAY_CACHE, ReplayCache, ReplayCacheFull
 
 from .conftest import CALLER, HA_SPIFFE_ID, OTHER, FakeSource, Signer
+
+SINGLE_USE = {CONF_SPIFFE_ID: HA_SPIFFE_ID, CONF_SINGLE_USE_TOKENS: True}
 
 
 async def setup_spiffe(
@@ -124,7 +127,7 @@ async def test_empty_allowlist_admits_nobody(
 async def test_replay_is_refused(
     hass: HomeAssistant, fake_source: FakeSource, signer: Signer
 ) -> None:
-    await setup_spiffe(hass)
+    await setup_spiffe(hass, options=SINGLE_USE)
     token = signer.token([HA_SPIFFE_ID], subject=CALLER)
     await async_verify_request(hass, _request(token), allowed_callers=[CALLER])
     assert await _status(hass, _request(token), [CALLER]) == 401
@@ -132,10 +135,21 @@ async def test_replay_is_refused(
     assert await _status(hass, _request(token), [CALLER, OTHER]) == 401
 
 
+async def test_tokens_are_reusable_by_default(
+    hass: HomeAssistant, fake_source: FakeSource, signer: Signer
+) -> None:
+    """Agents such as SPIRE and spiffex hand out the same token repeatedly."""
+    await setup_spiffe(hass)
+    token = signer.token([HA_SPIFFE_ID], subject=CALLER)
+    for _ in range(3):
+        assert await async_verify_request(hass, _request(token), allowed_callers=[CALLER]) == CALLER
+    assert DATA_REPLAY_CACHE not in hass.data
+
+
 async def test_refused_request_does_not_burn_the_token(
     hass: HomeAssistant, fake_source: FakeSource, signer: Signer
 ) -> None:
-    await setup_spiffe(hass)
+    await setup_spiffe(hass, options=SINGLE_USE)
     token = signer.token([HA_SPIFFE_ID], subject=CALLER)
     assert await _status(hass, _request(token), [OTHER]) == 403
     assert await async_verify_request(hass, _request(token), allowed_callers=[CALLER]) == CALLER
@@ -199,7 +213,7 @@ def test_replay_cache_ignores_the_signature_segment() -> None:
 async def test_flood_does_not_free_a_used_token(
     hass: HomeAssistant, fake_source: FakeSource, signer: Signer
 ) -> None:
-    await setup_spiffe(hass)
+    await setup_spiffe(hass, options=SINGLE_USE)
     hass.data[DATA_REPLAY_CACHE] = ReplayCache(max_entries=2)
     first = signer.token([HA_SPIFFE_ID], subject=CALLER)
     await async_verify_request(hass, _request(first), allowed_callers=[CALLER])
@@ -227,7 +241,7 @@ def _flip_s(token: str) -> str:
 async def test_signature_variants_are_replays(
     hass: HomeAssistant, fake_source: FakeSource, signer: Signer
 ) -> None:
-    await setup_spiffe(hass)
+    await setup_spiffe(hass, options=SINGLE_USE)
     token = signer.token([HA_SPIFFE_ID], subject=CALLER)
     variants = [token + "==", _flip_s(token)]
     # Each variant is itself accepted by validation, so only the replay cache can stop it.
@@ -287,7 +301,7 @@ async def test_unauthenticated_callers_cannot_probe_readiness(
 async def test_cache_lives_in_hass_data(
     hass: HomeAssistant, fake_source: FakeSource, signer: Signer
 ) -> None:
-    await setup_spiffe(hass)
+    await setup_spiffe(hass, options=SINGLE_USE)
     token = signer.token([HA_SPIFFE_ID], subject=CALLER)
     await async_verify_request(hass, _request(token), allowed_callers=[CALLER])
     assert len(hass.data[DATA_REPLAY_CACHE]) == 1

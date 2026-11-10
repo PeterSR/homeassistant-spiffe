@@ -14,6 +14,7 @@ from custom_components.spiffe.const import (
     CONF_ALLOWED_CALLERS,
     CONF_EXPOSE_WHOAMI,
     CONF_NAME,
+    CONF_SINGLE_USE_TOKENS,
     CONF_SOCKET,
     CONF_SPIFFE_ID,
     CONF_WEBHOOK_ID,
@@ -160,10 +161,19 @@ async def test_options_flow_sets_identity(hass: HomeAssistant, fake_source: Fake
     assert result["step_id"] == "init"
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_SPIFFE_ID: f"  {HA_SPIFFE_ID}  ", CONF_EXPOSE_WHOAMI: True}
+        result["flow_id"],
+        {
+            CONF_SPIFFE_ID: f"  {HA_SPIFFE_ID}  ",
+            CONF_EXPOSE_WHOAMI: True,
+            CONF_SINGLE_USE_TOKENS: True,
+        },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_SPIFFE_ID: HA_SPIFFE_ID, CONF_EXPOSE_WHOAMI: True}
+    assert entry.options == {
+        CONF_SPIFFE_ID: HA_SPIFFE_ID,
+        CONF_EXPOSE_WHOAMI: True,
+        CONF_SINGLE_USE_TOKENS: True,
+    }
 
 
 async def test_options_flow_defaults_and_empty_id(
@@ -173,12 +183,13 @@ async def test_options_flow_defaults_and_empty_id(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     defaults = _defaults(result)
     assert defaults[CONF_EXPOSE_WHOAMI] is False
+    assert defaults[CONF_SINGLE_USE_TOKENS] is False
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_EXPOSE_WHOAMI: False}
+        result["flow_id"], {CONF_EXPOSE_WHOAMI: False, CONF_SINGLE_USE_TOKENS: False}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_EXPOSE_WHOAMI: False}
+    assert entry.options == {CONF_EXPOSE_WHOAMI: False, CONF_SINGLE_USE_TOKENS: False}
 
 
 @pytest.mark.parametrize(
@@ -198,7 +209,8 @@ async def test_options_flow_rejects_invalid_spiffe_id(
     entry = await setup_spiffe(hass, options={})
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_SPIFFE_ID: value, CONF_EXPOSE_WHOAMI: False}
+        result["flow_id"],
+        {CONF_SPIFFE_ID: value, CONF_EXPOSE_WHOAMI: False, CONF_SINGLE_USE_TOKENS: False},
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_SPIFFE_ID: "invalid_spiffe_id"}

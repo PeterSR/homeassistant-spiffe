@@ -6,7 +6,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.spiffe.const import CONF_EXPOSE_WHOAMI, CONF_SPIFFE_ID, WHOAMI_PATH
+from custom_components.spiffe.const import (
+    CONF_EXPOSE_WHOAMI,
+    CONF_SINGLE_USE_TOKENS,
+    CONF_SPIFFE_ID,
+    WHOAMI_PATH,
+)
 
 from .conftest import CALLER, HA_SPIFFE_ID, FakeSource, Signer
 from .test_verify import setup_spiffe
@@ -63,13 +68,33 @@ async def test_works_when_enabled(
     assert resp.status == 401
 
 
-async def test_replay_is_refused(
+async def test_does_not_consume_tokens_by_default(
     hass: HomeAssistant,
     hass_client_no_auth: ClientSessionGenerator,
     fake_source: FakeSource,
     signer: Signer,
 ) -> None:
     await setup_spiffe(hass, options={CONF_SPIFFE_ID: HA_SPIFFE_ID, CONF_EXPOSE_WHOAMI: True})
+    client = await hass_client_no_auth()
+    headers = _bearer(signer)
+    assert (await client.post(WHOAMI_PATH, headers=headers)).status == 200
+    assert (await client.post(WHOAMI_PATH, headers=headers)).status == 200
+
+
+async def test_single_use_is_refused(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    fake_source: FakeSource,
+    signer: Signer,
+) -> None:
+    await setup_spiffe(
+        hass,
+        options={
+            CONF_SPIFFE_ID: HA_SPIFFE_ID,
+            CONF_EXPOSE_WHOAMI: True,
+            CONF_SINGLE_USE_TOKENS: True,
+        },
+    )
     client = await hass_client_no_auth()
     headers = _bearer(signer)
     assert (await client.post(WHOAMI_PATH, headers=headers)).status == 200
