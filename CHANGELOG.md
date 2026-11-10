@@ -4,14 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [0.2.0] - Unreleased
 
 ### Added
 
 - Receive calls from other workloads: `async_verify_request` authenticates a request carrying a
-  JWT-SVID (audience, allowed callers, replay protection shared by all endpoints), and
+  JWT-SVID (exactly Home Assistant's audience, allowed callers, replay protection shared by all endpoints), and
   `async_register_verified_webhook` registers a webhook that only runs for a verified caller. New
   error `SpiffeAuthError`. The public Python API is now a stable contract under semantic
   versioning.
