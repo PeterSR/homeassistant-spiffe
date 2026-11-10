@@ -34,6 +34,8 @@ ISSUE_PERMISSION_DENIED: Final = "permission_denied"
 # The Workload API refuses even the trust bundles: it has no identity for Home Assistant at all
 # (for example a SPIRE agent without a registration entry for it).
 ISSUE_NO_IDENTITY: Final = "no_identity"
+# One per event webhook whose ID is already registered by something else.
+ISSUE_WEBHOOK_ID_IN_USE: Final = "webhook_id_in_use"
 
 # Options.
 CONF_SPIFFE_ID: Final = "spiffe_id"

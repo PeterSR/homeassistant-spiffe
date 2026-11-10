@@ -59,4 +59,4 @@ class ReplayCache:
             del self._expiries[key]
 
 
-DATA_REPLAY_CACHE: HassKey[ReplayCache] = HassKey(DOMAIN)
+DATA_REPLAY_CACHE: HassKey[ReplayCache] = HassKey(f"{DOMAIN}_replay_cache")

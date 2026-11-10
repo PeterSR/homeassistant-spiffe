@@ -68,6 +68,10 @@
     "no_identity": {
       "title": "The SPIFFE Workload API has no identity for Home Assistant",
       "description": "The Workload API answers, but refuses to give Home Assistant anything, not even the trust bundles. Usually Home Assistant has not been registered (admitted) with your SPIFFE implementation yet. Home Assistant keeps retrying.\n\nThe error was: {error}"
+    },
+    "webhook_id_in_use": {
+      "title": "An event webhook cannot be registered",
+      "description": "The webhook ID of the event webhook {name} is already used by another webhook, so it is not active. Change its webhook ID in the SPIFFE integration's event webhook settings."
     }
   },
   "options": {

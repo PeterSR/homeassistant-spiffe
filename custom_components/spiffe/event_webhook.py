@@ -10,8 +10,9 @@ from aiohttp import web
 from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 
-from .api import async_register_verified_webhook
+from .api import _normalize_callers, async_register_verified_webhook
 from .const import (
     CONF_ALLOWED_CALLERS,
     CONF_NAME,
@@ -19,6 +20,7 @@ from .const import (
     DOMAIN,
     EVENT_BODY_LIMIT_BYTES,
     EVENT_WEBHOOK,
+    ISSUE_WEBHOOK_ID_IN_USE,
     SUBENTRY_EVENT_WEBHOOK,
 )
 
@@ -32,6 +34,14 @@ def async_register_event_webhooks(hass: HomeAssistant, entry: ConfigEntry) -> No
             continue
         webhook_id: str = subentry.data[CONF_WEBHOOK_ID]
         name: str = subentry.data[CONF_NAME]
+        issue_id = f"{ISSUE_WEBHOOK_ID_IN_USE}_{subentry.subentry_id}"
+        try:
+            callers = _normalize_callers(subentry.data[CONF_ALLOWED_CALLERS])
+        except (TypeError, ValueError) as err:
+            _LOGGER.error(
+                "Not registering the event webhook %s: bad allowed callers: %s", name, err
+            )
+            continue
         try:
             async_register_verified_webhook(
                 hass,
@@ -39,13 +49,25 @@ def async_register_event_webhooks(hass: HomeAssistant, entry: ConfigEntry) -> No
                 f"SPIFFE event: {name}",
                 webhook_id,
                 partial(_async_handle, name),
-                allowed_callers=subentry.data[CONF_ALLOWED_CALLERS],
+                allowed_callers=callers,
             )
         except ValueError:
+            # The callers are valid by now, so this is the ID: something else registered it.
             _LOGGER.error(
                 "Cannot register the event webhook %s: its webhook ID is already in use", name
             )
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key=ISSUE_WEBHOOK_ID_IN_USE,
+                translation_placeholders={"name": name},
+            )
+            entry.async_on_unload(partial(ir.async_delete_issue, hass, DOMAIN, issue_id))
             continue
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
         entry.async_on_unload(partial(webhook.async_unregister, hass, webhook_id))
 
 

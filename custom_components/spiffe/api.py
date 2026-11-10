@@ -14,6 +14,7 @@ from aiohttp import web
 from homeassistant.components import webhook
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+from homeassistant.util.hass_dict import HassKey
 
 from spiffe import JwtBundleSet
 
@@ -170,15 +171,25 @@ def _audiences(token: str) -> set[str]:
 
 
 async def _async_verify(
-    hass: HomeAssistant, request: web.Request, allowed_callers: Collection[str] | None
+    hass: HomeAssistant,
+    request: web.Request,
+    allowed_callers: Collection[str] | None,
+    *,
+    consume: bool = True,
 ) -> str:
-    """Verify a request. `None` for `allowed_callers` admits any valid caller."""
+    """Verify a request. `None` for `allowed_callers` admits any valid caller.
+
+    `consume=False` keeps the request out of the single-use memory entirely (whoami uses it, so
+    it can neither use up a token nor fill the memory).
+    """
     # Look at the request before anything about this installation, so an unauthenticated caller
     # learns nothing about whether SPIFFE is ready.
     header = request.headers.get("Authorization", "")
     if header[: len(BEARER_PREFIX)].lower() != BEARER_PREFIX or not header[len(BEARER_PREFIX) :]:
         raise SpiffeAuthError(401, "no bearer token")
     token = header[len(BEARER_PREFIX) :].strip()
+    if not token:
+        raise SpiffeAuthError(401, "no bearer token")
 
     coordinator = _coordinator(hass)
     audience = coordinator.config_entry.options.get(CONF_SPIFFE_ID)
@@ -204,7 +215,7 @@ async def _async_verify(
     if allowed_callers is not None and svid.spiffe_id not in allowed_callers:
         raise SpiffeAuthError(403, f"caller {svid.spiffe_id} is not allowed")
 
-    if not coordinator.config_entry.options.get(CONF_SINGLE_USE_TOKENS):
+    if not consume or not coordinator.config_entry.options.get(CONF_SINGLE_USE_TOKENS):
         # Tokens are bearer tokens, valid until they expire. Agents such as SPIRE and spiffex hand
         # out the same token for repeated fetches, so refusing a second use would refuse honest
         # callers.
@@ -221,6 +232,21 @@ async def _async_verify(
     if not fresh:
         raise SpiffeAuthError(401, "token already used")
     return svid.spiffe_id
+
+
+_WARN_INTERVAL = 60.0
+_DATA_WARNED: HassKey[dict[str, float]] = HassKey(f"{DOMAIN}_warned")
+
+
+def warn_throttled(hass: HomeAssistant, key: str, message: str, *args: object) -> None:
+    """Log a warning about a condition that every request hits, at most once a minute."""
+    now = dt_util.utcnow().timestamp()
+    warned = hass.data.setdefault(_DATA_WARNED, {})
+    if now - warned.get(key, float("-inf")) >= _WARN_INTERVAL:
+        if len(warned) > 64:
+            warned.clear()
+        warned[key] = now
+        _LOGGER.warning(message, *args)
 
 
 _ERROR_REASONS = {401: "unauthorized", 403: "forbidden", 503: "unavailable"}
@@ -249,6 +275,9 @@ def async_register_verified_webhook(
     answer a JSON body `{"error": "<reason>"}` with 401, 403 or 503 and never include token
     contents or exception text. The webhook is not limited to the local network. Unregister it
     with `homeassistant.components.webhook.async_unregister(hass, webhook_id)`.
+
+    Raises ValueError when `webhook_id` is already registered (by anyone), as well as for an
+    invalid `allowed_callers` or method.
     """
     callers = _normalize_callers(allowed_callers)
 
@@ -258,11 +287,10 @@ def async_register_verified_webhook(
         except SpiffeAuthError as err:
             _LOGGER.info("Webhook %s refused a request (%s): %s", name, err.status, err)
             return error_response(err.status)
-        except SpiffeNotReady as err:
-            _LOGGER.warning("Webhook %s cannot verify requests yet: %s", name, err)
-            return error_response(503)
-        except SpiffeError as err:
-            _LOGGER.warning("Webhook %s could not verify a request: %s", name, err)
+        except (SpiffeNotReady, SpiffeError) as err:
+            warn_throttled(
+                hass, f"{name}: {err}", "Webhook %s cannot verify requests: %s", name, err
+            )
             return error_response(503)
         response = await handler(hass, webhook_id, request, caller)
         return response if response is not None else web.Response(status=200)

@@ -62,7 +62,18 @@ def _check_url(url: str) -> None:
         parts = urlsplit(url)
     except ValueError:
         parts = None
-    if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
+    try:
+        port_ok = parts is not None and (parts.port or True)
+    except ValueError:
+        port_ok = False
+    if (
+        parts is None
+        or not port_ok
+        or parts.scheme not in ("http", "https")
+        or not parts.hostname
+        # Credentials in the URL: aiohttp rejects them mid-request, and they have no place here.
+        or "@" in parts.netloc
+    ):
         raise ServiceValidationError(translation_domain=DOMAIN, translation_key="invalid_url")
 
 
@@ -125,7 +136,7 @@ async def _async_http_request(call: ServiceCall) -> ServiceResponse:
             body, truncated = await _read_limited(response, RESPONSE_LIMIT_BYTES)
             status = response.status
             content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
-    except (aiohttp.ClientError, TimeoutError) as err:
+    except (aiohttp.ClientError, TimeoutError, ValueError) as err:
         # Only the host and the kind of error: a URL can hold credentials, which a message must not.
         raise HomeAssistantError(
             translation_domain=DOMAIN,
@@ -139,6 +150,6 @@ async def _async_http_request(call: ServiceCall) -> ServiceResponse:
     if not truncated and content_type.endswith("json"):
         try:
             return {"status": status, "json": json.loads(body)}
-        except ValueError:
+        except ValueError, RecursionError:
             pass
     return {"status": status, "text": body.decode("utf-8", errors="replace")}

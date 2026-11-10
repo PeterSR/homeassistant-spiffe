@@ -35,6 +35,9 @@ class WhoamiView(HomeAssistantView):
     async def delete(self, request: web.Request) -> web.Response:
         return await self._handle(request)
 
+    async def head(self, request: web.Request) -> web.Response:
+        return await self._handle(request)
+
     async def post(self, request: web.Request) -> web.Response:
         return await self._handle(request)
 
@@ -46,7 +49,7 @@ class WhoamiView(HomeAssistantView):
         if request.method != "POST":
             return web.Response(status=405, headers={"Allow": "POST"})
         try:
-            caller = await _async_verify(hass, request, None)
+            caller = await _async_verify(hass, request, None, consume=False)
         except SpiffeAuthError as err:
             _LOGGER.info("whoami refused a request (%s): %s", err.status, err)
             return error_response(err.status)
