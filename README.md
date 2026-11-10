@@ -55,27 +55,148 @@ retrying in the background.
 
 ## Using it from your integration
 
-Add `spiffe` to the `dependencies` in your `manifest.json`, then:
+Add `spiffe` to the `dependencies` in your `manifest.json`, then import from the package. As a
+sibling custom integration that is `from ..spiffe import ...`; `from custom_components.spiffe
+import ...` works too.
+
+**This is a stable contract from 0.2.0.** Everything below follows [semantic
+versioning](https://semver.org/spec/v2.0.0.html): signatures and behavior documented here only
+change in a major version.
 
 | Helper | What it does |
 |---|---|
 | `async_fetch_jwt_svid(hass, audience, subject=None)` | a JWT-SVID for this audience (or list of audiences), as a string |
-| `async_validate_jwt_svid(hass, token, audience)` | checks a token someone sent to Home Assistant and returns its SPIFFE ID |
+| `async_validate_jwt_svid(hass, token, audience)` | checks a token someone sent to Home Assistant and returns its SPIFFE ID. It does not stop a token from being used twice |
+| `async_verify_request(hass, request, *, allowed_callers)` | authenticates an incoming `aiohttp` request and returns the caller's SPIFFE ID (see below) |
+| `async_register_verified_webhook(hass, domain, name, webhook_id, handler, *, allowed_callers, allowed_methods=("POST",))` | registers a webhook that only runs your handler for a verified caller (see below) |
 | `async_get_jwt_bundles(hass)` | a copy of the trust bundles (public keys), refreshed every minute; refused when stale, like validation |
 | `async_x509_available(hass)` | whether the agent offered X.509-SVIDs at setup |
 
+Errors: `SpiffeNotReady` while the integration is not loaded (raise `ConfigEntryNotReady` in your
+own setup when you get it), `SpiffeError` when the agent cannot provide a token or a token does not
+validate, and `SpiffeAuthError` (a `SpiffeError` with a `status` of 401 or 403) when a request is
+not authenticated or not allowed.
+
 Validation refuses to use bundles that could not be refreshed for 15 minutes, so a key the issuer
 withdrew is not trusted for as long as the agent is unreachable.
-
-They raise `SpiffeNotReady` while the integration is not loaded (raise `ConfigEntryNotReady` in
-your own setup when you get it), and `SpiffeError` when the agent cannot provide a token or a token
-does not validate.
 
 Tokens live for minutes. Fetch one when you need it rather than storing it, and never put one in
 an entity, an attribute, a service response or a log line.
 
 Use an audience that names the one service you are calling, and have that service check the
 audience, the exact SPIFFE ID it expects, and the expiry.
+
+### Receiving calls
+
+To accept calls from other workloads, first set Home Assistant's own SPIFFE ID in the
+integration's options (**Configure**), for example `spiffe://example.org/ha/core`. It is the
+audience every incoming token must name. While it is empty, incoming requests are answered with
+503.
+
+`async_verify_request` needs `Authorization: Bearer <JWT-SVID>`, and answers as follows:
+
+- no or malformed header, an invalid or expired token, the wrong audience or an unknown signer:
+  `SpiffeAuthError` with status 401;
+- a valid token whose subject is not in `allowed_callers`: status 403 (an empty list admits nobody);
+- a token that was already accepted: status 401. Accepted tokens are remembered, by their SHA-256,
+  until they expire, in one bounded cache shared by every verified endpoint in Home Assistant, so a
+  captured token cannot be replayed;
+- no SPIFFE ID configured, integration not loaded, or bundles too old: `SpiffeNotReady` (answer
+  503).
+
+`async_register_verified_webhook` wraps Home Assistant's webhook registration (it is not limited to
+the local network, because the token is the authentication). The handler runs only for a verified
+caller. Failures answer a JSON body such as `{"error": "unauthorized"}` with 401, 403 or 503, never
+with token contents or exception text. Unregister with
+`homeassistant.components.webhook.async_unregister(hass, webhook_id)`.
+
+An integration that lets one workload push data to Home Assistant:
+
+```json
+{ "domain": "orders_bridge", "dependencies": ["spiffe", "webhook"], "...": "..." }
+```
+
+```python
+from aiohttp import web
+from homeassistant.core import HomeAssistant
+
+from ..spiffe import async_register_verified_webhook
+
+ORDERS_API = "spiffe://example.org/orders/api"
+
+
+async def _handle(
+    hass: HomeAssistant, webhook_id: str, request: web.Request, caller: str
+) -> web.Response | None:
+    order = await request.json()
+    hass.bus.async_fire("orders_bridge_order", {"caller": caller, "order": order})
+    return web.json_response({"ok": True})
+
+
+async def async_setup_entry(hass, entry):
+    async_register_verified_webhook(
+        hass,
+        "orders_bridge",
+        "Orders bridge",
+        entry.data["webhook_id"],
+        _handle,
+        allowed_callers=[ORDERS_API],
+    )
+    return True
+```
+
+The caller sends `POST /api/webhook/<id>` with a fresh JWT-SVID whose audience is Home Assistant's
+SPIFFE ID.
+
+## Event webhooks
+
+For automations, you do not need to write an integration. On the SPIFFE entry under
+**Settings → Devices & services**, use **Add event webhook** to create a subentry with a name, a webhook ID (a random one is
+suggested) and the SPIFFE IDs allowed to call it (at least one). Each verified `POST` to
+`/api/webhook/<id>` with a JSON body fires the event `spiffe_webhook`:
+
+```yaml
+event_type: spiffe_webhook
+data:
+  webhook_id: "..."
+  name: Orders
+  caller: spiffe://example.org/orders/api
+  data: { ... }   # the parsed JSON body, null when the body is empty
+```
+
+The webhook answers `200 {"ok": true}`, and `400` when the body is not JSON. Trigger an
+automation with an event trigger on `spiffe_webhook`, and check `trigger.event.data.name`.
+
+## Calling out: `spiffe.http_request`
+
+The action `spiffe.http_request` calls a URL with a JWT-SVID for the audience you name, for
+automations and scripts that cannot use Python. Fields: `url` (http or https), `audience` (a SPIFFE
+ID), `method` (default `POST`), `json` (an optional object), `headers` (optional, `Authorization`
+cannot be set) and `timeout` (seconds, default 10). It returns the response:
+
+```yaml
+action: spiffe.http_request
+data:
+  url: https://api.example.org/hook
+  audience: spiffe://example.org/orders/api
+  json: { night: 3 }
+response_variable: reply   # {"status": 200, "json": {...}} or {"status": 200, "text": "..."}
+```
+
+`json` is returned when the response is JSON, otherwise `text`, cut at 64 KiB. Redirects are not
+followed. Network failures raise an error.
+
+**It is admin-only.** The action hands Home Assistant's identity token to whatever server the URL
+points at, so letting a non-administrator pick the URL or the audience would let them collect
+tokens that others trust. Do not expose it to untrusted users through scripts either: a script
+that runs it with a user-supplied URL has the same problem.
+
+## Whoami
+
+When **Offer the whoami endpoint** is enabled in the options, `POST /api/spiffe/whoami` with a
+bearer JWT-SVID runs the full check (signature, audience, expiry, replay) for any caller, and
+answers `{"caller": "<spiffe id>", "audience": "<Home Assistant's spiffe id>"}`. It is for checking
+that a new workload is set up correctly. It is off by default and answers 404 while it is off.
 
 ## Entities
 
@@ -94,6 +215,10 @@ Repair issues tell you when something needs attention:
   registration entry for it;
 - an integration asked for a token and was refused, usually because Home Assistant has not been
   admitted at the issuer yet, or the audience is not allowed.
+
+Incoming calls are only as trustworthy as your trust domain's keys: Home Assistant accepts any
+token signed by a key in the bundles it holds, for its own SPIFFE ID as audience, from the callers
+you allow.
 
 ## Security model
 
