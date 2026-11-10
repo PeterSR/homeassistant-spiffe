@@ -78,14 +78,14 @@
     "step": {
       "init": {
         "title": "Home Assistant's SPIFFE identity",
-        "description": "Set Home Assistant's own SPIFFE ID to let other workloads call it with a JWT-SVID. It is the audience every incoming token must name. While it is empty, incoming requests are answered with 503.",
+        "description": "Set Home Assistant's own SPIFFE ID to let other workloads call it with a JWT-SVID. It is the audience every incoming token must name. While it is empty, a request that carries a bearer token is answered with 503.",
         "data": {
           "spiffe_id": "Home Assistant's SPIFFE ID",
           "expose_whoami": "Offer the whoami endpoint",
           "single_use_tokens": "Accept each token only once"
         },
         "data_description": {
-          "spiffe_id": "For example spiffe://example.org/ha/core. Leave empty to not accept incoming requests.",
+          "spiffe_id": "For example spiffe://example.org/ha/core. While this is empty, a request that carries a bearer token is answered with 503, so leave it empty to not accept incoming requests.",
           "expose_whoami": "Lets a workload POST its token to /api/spiffe/whoami and be told who Home Assistant sees. Handy for checking a setup, off by default.",
           "single_use_tokens": "Refuse a token that was already accepted. Only enable this if your SPIFFE issuer mints a fresh token for every fetch; agents that cache tokens, such as SPIRE and spiffex, will have repeated calls refused."
         }

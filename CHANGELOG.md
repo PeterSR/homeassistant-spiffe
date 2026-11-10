@@ -20,6 +20,7 @@ All notable changes to this project are documented here. The format is based on
   accepted. It is off by default, because agents that cache tokens (SPIRE, spiffex) hand out the
   same token repeatedly.
 - Event webhook subentries: a verified request fires the `spiffe_webhook` event.
+- A repair issue when an event webhook cannot be registered because its ID is already in use.
 - Admin-only action `spiffe.http_request` to call a URL with a JWT-SVID for an audience.
 
 ## [0.1.0] - 2026-11-10

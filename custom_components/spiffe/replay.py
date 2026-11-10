@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-from collections import OrderedDict
 
 from homeassistant.util.hass_dict import HassKey
 
@@ -29,7 +28,7 @@ class ReplayCache:
 
     def __init__(self, max_entries: int = REPLAY_CACHE_MAX_ENTRIES) -> None:
         self._max_entries = max_entries
-        self._expiries: OrderedDict[str, float] = OrderedDict()
+        self._expiries: dict[str, float] = {}
 
     def __len__(self) -> int:
         return len(self._expiries)

@@ -63,8 +63,10 @@ import ...` works too.
 versioning](https://semver.org/spec/v2.0.0.html): what is documented here only changes in a major
 version. That covers the Python API (names, signatures and exceptions), the shape of the
 `spiffe_webhook` event, the fields and response of `spiffe.http_request`, the response of the
-whoami endpoint, and the option keys. Anything not documented here, including the module layout
-inside the package, may change in any release.
+whoami endpoint, the option keys, the HTTP status codes and error reasons the endpoints answer
+(`unauthorized`, `forbidden`, `unavailable`, `too_large`, `invalid_json`), and the event webhook's
+200, 400 and 413. Anything not documented here, including the module layout inside the package,
+may change in any release.
 
 | Helper | What it does |
 |---|---|
@@ -81,7 +83,8 @@ is not a SPIFFE ID of a workload raises `ValueError`, when you register and when
 Errors: `SpiffeNotReady` while the integration is not loaded (raise `ConfigEntryNotReady` in your
 own setup when you get it), `SpiffeError` when the agent cannot provide a token or a token does not
 validate, and `SpiffeAuthError` (a `SpiffeError` with a `status` of 401 or 403) when a request is
-not authenticated or not allowed.
+not authenticated or not allowed. `async_fetch_jwt_svid` also raises `ValueError` for an empty
+audience or an invalid subject, and `async_validate_jwt_svid` for an empty or non-string audience.
 
 Validation refuses to use bundles that could not be refreshed for 15 minutes, so a key the issuer
 withdrew is not trusted for as long as the agent is unreachable.
@@ -140,15 +143,28 @@ ORDERS_API = "spiffe://example.org/orders/api"
 MAX_BODY = 64 * 1024
 
 
+async def _read_limited(request: web.Request, limit: int) -> bytes | None:
+    """The body, or None when it is longer than `limit`. A read returns what is buffered."""
+    chunks: list[bytes] = []
+    size = 0
+    while size <= limit:
+        chunk = await request.content.read(limit + 1 - size)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return None if size > limit else b"".join(chunks)
+
+
 async def _handle(
     hass: HomeAssistant, webhook_id: str, request: web.Request, caller: str
 ) -> web.Response | None:
-    if (request.content_length or 0) > MAX_BODY:
+    body = await _read_limited(request, MAX_BODY)
+    if body is None:
         return web.json_response({"error": "too_large"}, status=413)
     try:
-        # Reads at most MAX_BODY + 1 bytes, in case the length was not declared.
-        order = json.loads(await request.content.read(MAX_BODY + 1))
-    except ValueError:
+        order = json.loads(body)
+    except ValueError, RecursionError:
         return web.json_response({"error": "invalid_json"}, status=400)
     hass.bus.async_fire("orders_bridge_order", {"caller": caller, "order": order})
     return web.json_response({"ok": True})
@@ -247,7 +263,8 @@ Repair issues tell you when something needs attention:
 - it answers, but has no identity for Home Assistant at all, for example a SPIRE agent without a
   registration entry for it;
 - an integration asked for a token and was refused, usually because Home Assistant has not been
-  admitted at the issuer yet, or the audience is not allowed.
+  admitted at the issuer yet, or the audience is not allowed;
+- an event webhook is not active because another webhook already uses its ID.
 
 ## Security model
 

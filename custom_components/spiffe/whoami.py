@@ -7,7 +7,7 @@ import logging
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 
-from .api import _async_verify, error_response
+from .api import _async_verify, error_response, warn_throttled
 from .const import CONF_EXPOSE_WHOAMI, CONF_SPIFFE_ID, DOMAIN, WHOAMI_PATH
 from .errors import SpiffeAuthError, SpiffeError, SpiffeNotReady
 
@@ -48,12 +48,13 @@ class WhoamiView(HomeAssistantView):
             return web.Response(status=404)
         if request.method != "POST":
             return web.Response(status=405, headers={"Allow": "POST"})
+        audience = entries[0].options.get(CONF_SPIFFE_ID)
         try:
             caller = await _async_verify(hass, request, None, consume=False)
         except SpiffeAuthError as err:
             _LOGGER.info("whoami refused a request (%s): %s", err.status, err)
             return error_response(err.status)
         except (SpiffeError, SpiffeNotReady) as err:
-            _LOGGER.warning("whoami cannot verify requests: %s", err)
+            warn_throttled(hass, f"whoami: {err}", "whoami cannot verify requests: %s", err)
             return error_response(503)
-        return self.json({"caller": caller, "audience": entries[0].options[CONF_SPIFFE_ID]})
+        return self.json({"caller": caller, "audience": audience})
