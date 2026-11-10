@@ -1,0 +1,14 @@
+{
+  "domain": "spiffe",
+  "name": "SPIFFE",
+  "codeowners": ["@PeterSR"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/PeterSR/homeassistant-spiffe",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/PeterSR/homeassistant-spiffe/issues",
+  "requirements": ["spiffe==0.4.0"],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

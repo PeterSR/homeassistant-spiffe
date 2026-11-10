@@ -1,0 +1,68 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to a SPIFFE Workload API",
+        "description": "Home Assistant gets its SPIFFE identity from a Workload API served on a Unix socket, for example by an agent running as an app (add-on). Any SPIFFE implementation works.",
+        "data": {
+          "socket": "Workload API address"
+        },
+        "data_description": {
+          "socket": "A unix:// address as Home Assistant sees it, such as unix:///config/.spiffe/agent.sock"
+        }
+      },
+      "reconfigure": {
+        "title": "Change the Workload API address",
+        "data": {
+          "socket": "Workload API address"
+        },
+        "data_description": {
+          "socket": "A unix:// address as Home Assistant sees it, such as unix:///config/.spiffe/agent.sock"
+        }
+      }
+    },
+    "error": {
+      "invalid_socket": "This is not a valid address. Use unix:///absolute/path/to/agent.sock.",
+      "socket_missing": "There is no socket at this path yet. Start the agent first, then try again.",
+      "cannot_connect": "The socket exists but the Workload API did not answer. Check that the agent is running and can reach its issuer."
+    },
+    "abort": {
+      "already_configured": "SPIFFE is already set up.",
+      "single_instance_allowed": "SPIFFE is already set up.",
+      "reconfigure_successful": "The Workload API address was changed."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "workload_api": {
+        "name": "Workload API"
+      },
+      "x509_available": {
+        "name": "X.509-SVIDs available"
+      }
+    },
+    "sensor": {
+      "bundle_keys": {
+        "name": "Trust bundle keys",
+        "state_attributes": {
+          "trust_domains": {
+            "name": "Trust domains"
+          }
+        }
+      },
+      "last_svid_fetch": {
+        "name": "Last JWT-SVID fetch"
+      }
+    }
+  },
+  "issues": {
+    "workload_api_unreachable": {
+      "title": "The SPIFFE Workload API is not answering",
+      "description": "For more than five minutes, Home Assistant could not reach the Workload API at {socket}. Integrations that use SPIFFE cannot get tokens until it answers again.\n\nCheck that the agent is running. The last error was: {error}"
+    },
+    "permission_denied": {
+      "title": "No SPIFFE identity has been issued to Home Assistant",
+      "description": "The Workload API answers, but refused to issue a JWT-SVID. Usually this means Home Assistant has not been admitted (registered) at the issuer yet, or the audience requested is not allowed.\n\nThe error was: {error}"
+    }
+  }
+}

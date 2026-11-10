@@ -1,0 +1,139 @@
+"""End-to-end test of the Workload API source against a real agent.
+
+spiffex is used here because its `dev` command sets up a whole local trust domain in one step.
+The integration itself knows nothing about spiffex; any Workload API would do.
+
+Skipped unless SPIFFEX names a spiffex binary, for example:
+
+    SPIFFEX=$(command -v spiffex) pytest tests/test_e2e_spiffex.py
+"""
+
+from __future__ import annotations
+
+import os
+import socket
+import subprocess
+import tempfile
+import time
+from collections.abc import Generator
+from pathlib import Path
+
+import pytest
+import pytest_socket
+
+from custom_components.spiffe.source import (
+    SourceUnavailableError,
+    WorkloadApiSource,
+    validate_jwt_svid,
+)
+
+SPIFFEX = os.environ.get("SPIFFEX")
+
+pytestmark = pytest.mark.skipif(not SPIFFEX, reason="set SPIFFEX to a spiffex binary")
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for(path: Path, timeout: float = 20) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.1)
+    raise TimeoutError(f"{path} did not appear")
+
+
+@pytest.fixture(params=[False, True], ids=["jwt-only", "with-ca"])
+def agent_socket(
+    request: pytest.FixtureRequest,
+) -> Generator[tuple[str, bool, subprocess.Popen[bytes]]]:
+    with_ca: bool = request.param
+    # Home Assistant's test plugin blocks TCP sockets; these tests talk to real local processes.
+    pytest_socket.enable_socket()
+    port = _free_port()
+    # Short base directory: a Unix socket path must stay under about 100 bytes.
+    with tempfile.TemporaryDirectory(prefix="sx", dir="/tmp") as base:
+        td = Path(base) / "td"
+        args = [SPIFFEX, "dev", "-dir", str(td), "-listen", f"127.0.0.1:{port}"]
+        if with_ca:
+            args.append("-ca")
+        subprocess.run(args, check=True, capture_output=True)
+        sock = Path(base) / "agent.sock"
+        procs = [
+            subprocess.Popen(
+                [
+                    SPIFFEX,
+                    "issuer",
+                    "-config",
+                    str(td / "issuer.yaml"),
+                    "-listen",
+                    f"127.0.0.1:{port}",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ),
+        ]
+        try:
+            time.sleep(0.5)
+            procs.append(
+                subprocess.Popen(
+                    [
+                        SPIFFEX,
+                        "agent",
+                        "-issuer",
+                        f"http://127.0.0.1:{port}",
+                        "-client-id",
+                        "dev/orders",
+                        "-key-file",
+                        str(td / "workloads/orders.key"),
+                        "-socket",
+                        str(sock),
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            )
+            _wait_for(sock)
+            yield f"unix://{sock}", with_ca, procs[1]
+        finally:
+            for proc in reversed(procs):
+                proc.terminate()
+                proc.wait(timeout=10)
+
+
+def test_fetch_and_validate(
+    agent_socket: tuple[str, bool, subprocess.Popen[bytes]],
+) -> None:
+    uri, with_ca, _ = agent_socket
+    source = WorkloadApiSource(uri, 10)
+    try:
+        bundles = source.fetch_jwt_bundles()
+        assert {b.trust_domain.name for b in bundles.bundles} == {"spiffex.test"}
+
+        svid = source.fetch_jwt_svid("spiffe://spiffex.test/dev/billing")
+        assert svid.spiffe_id == "spiffe://spiffex.test/dev/orders"
+        checked = validate_jwt_svid(bundles, svid.token, "spiffe://spiffex.test/dev/billing")
+        assert checked.spiffe_id == svid.spiffe_id
+
+        assert source.x509_available() is with_ca
+    finally:
+        source.close()
+
+
+def test_agent_stopped(agent_socket: tuple[str, bool, subprocess.Popen[bytes]]) -> None:
+    """An agent that crashes leaves its socket file behind; calls then fail with a clear error."""
+    uri, _, agent = agent_socket
+    source = WorkloadApiSource(uri, 3)
+    try:
+        source.fetch_jwt_bundles()
+        agent.kill()
+        agent.wait(timeout=10)
+        assert Path(uri.removeprefix("unix://")).exists()
+        with pytest.raises(SourceUnavailableError):
+            source.fetch_jwt_bundles()
+    finally:
+        source.close()

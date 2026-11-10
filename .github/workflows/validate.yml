@@ -1,0 +1,55 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # The brands check needs the integration in home-assistant/brands, which comes later.
+          ignore: brands
+
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    env:
+      SPIFFEX_VERSION: "0.4.1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+      - run: uv sync --group test
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - name: Fetch spiffex for the end-to-end tests
+        run: |
+          base="https://github.com/PeterSR/spiffex/releases/download/v${SPIFFEX_VERSION}"
+          archive="spiffex_${SPIFFEX_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "$base/$archive"
+          curl -fsSLO "$base/checksums.txt"
+          grep " ${archive}\$" checksums.txt | sha256sum -c -
+          tar xzf "$archive" spiffex
+          echo "SPIFFEX=$PWD/spiffex" >> "$GITHUB_ENV"
+      - run: uv run pytest -v
