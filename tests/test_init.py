@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.common import (
 from spiffe import TrustDomain
 
 from custom_components.spiffe import (
+    _delete_issues,
     SpiffeError,
     SpiffeNotReady,
     async_fetch_jwt_svid,
@@ -305,3 +306,20 @@ async def test_no_identity_later_is_not_unreachable(
     fake_source.bundles_denied = False
     await _tick(hass, freezer)
     assert not issues.async_get_issue(DOMAIN, ISSUE_NO_IDENTITY)
+
+
+async def test_check_in_flight_at_unload_leaves_no_issue(
+    hass: HomeAssistant, fake_source: FakeSource, freezer: FrozenDateTimeFactory
+) -> None:
+    """A check that fails after unload began must not bring a repair issue back."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    fake_source.reachable = False
+    await _tick(hass, freezer, 7)
+    issues = ir.async_get(hass)
+    assert issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)
+
+    await coordinator.async_shutdown()
+    _delete_issues(hass)
+    await coordinator._async_update_data()
+    assert not issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)

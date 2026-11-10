@@ -73,6 +73,8 @@ class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
         self.x509_available = x509_available
         self.last_svid_fetch: datetime | None = None
         self._failing_since: datetime | None = None
+        # Set on unload, so a check still in flight cannot recreate a repair issue afterwards.
+        self.closed = False
         self.async_set_updated_data(self._health(reachable=True))
 
     def _health(self, *, reachable: bool) -> SpiffeHealth:
@@ -83,10 +85,16 @@ class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
             last_svid_fetch=self.last_svid_fetch,
         )
 
+    async def async_shutdown(self) -> None:
+        self.closed = True
+        await super().async_shutdown()
+
     async def _async_update_data(self) -> SpiffeHealth:
         try:
             bundles = await self.hass.async_add_executor_job(self.source.fetch_jwt_bundles)
         except SourceUnavailableError as err:
+            if self.closed:
+                return self._health(reachable=False)
             if err.permission_denied:
                 # It answers, but has no identity for us: a different problem from not answering.
                 self.note_no_identity(str(err))
