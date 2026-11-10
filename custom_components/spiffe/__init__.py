@@ -24,6 +24,8 @@ from homeassistant.exceptions import (
     HomeAssistantError,
 )
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
 
 from spiffe import JwtBundleSet
 
@@ -31,8 +33,10 @@ from .const import (
     CALL_TIMEOUT,
     CONF_SOCKET,
     DOMAIN,
+    HEALTH_INTERVAL,
     ISSUE_PERMISSION_DENIED,
     ISSUE_UNREACHABLE,
+    MAX_BUNDLE_AGE,
 )
 from .coordinator import SpiffeConfigEntry, SpiffeCoordinator
 from .source import (
@@ -93,9 +97,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpiffeConfigEntry) -> bo
 
     coordinator = SpiffeCoordinator(hass, entry, source, bundles, x509)
     entry.runtime_data = coordinator
-    # Keep the checks running even when every entity is disabled: they also refresh the bundles
-    # the helpers validate with.
-    entry.async_on_unload(coordinator.async_add_listener(lambda: None))
+
+    # Scheduled here rather than by the coordinator, so the checks (which also refresh the bundles
+    # the helpers validate with) keep running when entities are disabled or polling is turned off.
+    async def _async_check(_now: object) -> None:
+        await coordinator.async_refresh()
+
+    entry.async_on_unload(async_track_time_interval(hass, _async_check, HEALTH_INTERVAL))
     ir.async_delete_issue(hass, DOMAIN, ISSUE_UNREACHABLE)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -106,7 +114,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: SpiffeConfigEntry) -> b
     """Stop the checks and close the connection."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        await hass.async_add_executor_job(entry.runtime_data.source.close)
+        coordinator = entry.runtime_data
+        await coordinator.async_shutdown()
+        await hass.async_add_executor_job(coordinator.source.close)
         _delete_issues(hass)
     return unloaded
 
@@ -156,8 +166,12 @@ async def async_fetch_jwt_svid(
 
 
 async def async_get_jwt_bundles(hass: HomeAssistant) -> JwtBundleSet:
-    """Return the JWT bundles from the latest successful check, at most a minute or so old."""
-    return _coordinator(hass).bundles
+    """Return a copy of the JWT bundles from the latest successful check.
+
+    They are refreshed every minute while the Workload API answers.
+    """
+    bundles = _coordinator(hass).bundles
+    return JwtBundleSet({b.trust_domain: b for b in bundles.bundles})
 
 
 async def async_validate_jwt_svid(hass: HomeAssistant, token: str, audience: str) -> str:
@@ -165,9 +179,19 @@ async def async_validate_jwt_svid(hass: HomeAssistant, token: str, audience: str
 
     It must be for `audience`, unexpired, and signed by a key in the cached bundles. Check the
     returned SPIFFE ID against the caller you expect: a valid token only says who sent it.
-    Raises SpiffeNotReady or SpiffeError.
+    Raises SpiffeNotReady, SpiffeError (also when the bundles could not be refreshed for a
+    while, so a key the issuer withdrew is not trusted indefinitely), or ValueError for an empty
+    or non-string audience.
     """
     coordinator = _coordinator(hass)
+    if not isinstance(audience, str) or not audience.strip():
+        raise ValueError("the audience must be a non-empty string")
+    age = dt_util.utcnow() - coordinator.bundles_fetched_at
+    if age > MAX_BUNDLE_AGE:
+        raise SpiffeError(
+            f"The trust bundles have not been refreshed for {int(age.total_seconds() // 60)}"
+            " minutes; not validating against them"
+        )
     try:
         svid = await hass.async_add_executor_job(
             validate_jwt_svid, coordinator.bundles, token, audience

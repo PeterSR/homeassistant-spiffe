@@ -193,8 +193,10 @@ def validate_jwt_svid(bundles: JwtBundleSet, token: str, audience: str) -> Fetch
     """Check a JWT-SVID someone presented against the cached bundles.
 
     Raises SpiffeSourceError if the token is malformed, from an unknown trust domain, signed by
-    an unknown key, expired, or not for this audience.
+    an unknown key, expired, or not for this audience, and ValueError for a bad audience.
     """
+    if not isinstance(audience, str) or not audience.strip():
+        raise ValueError("the audience must be a non-empty string")
     try:
         unverified = JwtSvid.parse_insecure(token, {audience})
         bundle = bundles.get_bundle_for_trust_domain(unverified.spiffe_id.trust_domain)

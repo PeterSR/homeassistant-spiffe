@@ -61,8 +61,8 @@
       "description": "For more than five minutes, Home Assistant could not reach the Workload API at {socket}. Integrations that use SPIFFE cannot get tokens until it answers again.\n\nCheck that the agent is running. The last error was: {error}"
     },
     "permission_denied": {
-      "title": "No SPIFFE identity has been issued to Home Assistant",
-      "description": "The Workload API answers, but refused to issue a JWT-SVID. Usually this means Home Assistant has not been admitted (registered) at the issuer yet, or the audience requested is not allowed.\n\nThe error was: {error}"
+      "title": "Home Assistant was refused a SPIFFE token",
+      "description": "An integration asked for a JWT-SVID, and the Workload API refused it. Usually Home Assistant has not been admitted (registered) at the issuer yet, or the issuer does not allow the audience that was requested.\n\nThe error was: {error}"
     }
   }
 }

@@ -17,7 +17,6 @@ from spiffe import JwtBundleSet
 from .const import (
     CONF_SOCKET,
     DOMAIN,
-    HEALTH_INTERVAL,
     ISSUE_PERMISSION_DENIED,
     ISSUE_UNREACHABLE,
     UNREACHABLE_GRACE,
@@ -40,10 +39,14 @@ class SpiffeHealth:
 
 
 class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
-    """Checks the source on a schedule and holds what the helpers need.
+    """Checks the source and holds what the helpers need.
 
     The check is a one-shot bundle fetch. It never raises, so the entities stay available and
     report the source as unreachable instead of going unavailable themselves.
+
+    The coordinator has no update interval of its own: `async_setup_entry` schedules the check,
+    because the coordinator's own schedule stops when a user turns off polling for the entry, and
+    the bundles must keep being refreshed regardless.
     """
 
     config_entry: SpiffeConfigEntry
@@ -61,10 +64,11 @@ class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
             _LOGGER,
             config_entry=entry,
             name=DOMAIN,
-            update_interval=HEALTH_INTERVAL,
+            update_interval=None,
         )
         self.source = source
         self.bundles = bundles
+        self.bundles_fetched_at = dt_util.utcnow()
         self.x509_available = x509_available
         self.last_svid_fetch: datetime | None = None
         self._failing_since: datetime | None = None
@@ -85,6 +89,7 @@ class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
             self._note_failure(str(err))
             return self._health(reachable=False)
         self.bundles = bundles
+        self.bundles_fetched_at = dt_util.utcnow()
         self._note_success()
         return self._health(reachable=True)
 
@@ -123,13 +128,13 @@ class SpiffeCoordinator(DataUpdateCoordinator[SpiffeHealth]):
         ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PERMISSION_DENIED)
 
     def note_permission_denied(self, error: str) -> None:
-        """Raise a repair issue: the source answers but will not issue this identity."""
+        """Raise a repair issue: the source answers but refused a JWT-SVID."""
         ir.async_create_issue(
             self.hass,
             DOMAIN,
             ISSUE_PERMISSION_DENIED,
             is_fixable=False,
-            severity=ir.IssueSeverity.ERROR,
+            severity=ir.IssueSeverity.WARNING,
             translation_key=ISSUE_PERMISSION_DENIED,
             translation_placeholders={"error": error},
         )

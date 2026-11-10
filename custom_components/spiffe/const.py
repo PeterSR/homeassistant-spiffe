@@ -22,6 +22,10 @@ X509_PROBE_TIMEOUT: Final = 15.0
 # How often the Workload API is checked, and the cached trust bundles refreshed.
 HEALTH_INTERVAL: Final = timedelta(seconds=60)
 
+# Validating with older bundles than this is refused: a key the issuer removed in an emergency
+# must not stay trusted for as long as the agent is unreachable.
+MAX_BUNDLE_AGE: Final = timedelta(minutes=15)
+
 # How long the Workload API may fail before a repair issue is raised.
 UNREACHABLE_GRACE: Final = timedelta(minutes=5)
 

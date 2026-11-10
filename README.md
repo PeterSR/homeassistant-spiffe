@@ -61,8 +61,11 @@ Add `spiffe` to the `dependencies` in your `manifest.json`, then:
 |---|---|
 | `async_fetch_jwt_svid(hass, audience, subject=None)` | a JWT-SVID for this audience (or list of audiences), as a string |
 | `async_validate_jwt_svid(hass, token, audience)` | checks a token someone sent to Home Assistant and returns its SPIFFE ID |
-| `async_get_jwt_bundles(hass)` | the trust bundles (public keys), refreshed every minute |
+| `async_get_jwt_bundles(hass)` | a copy of the trust bundles (public keys), refreshed every minute |
 | `async_x509_available(hass)` | whether the agent offered X.509-SVIDs at setup |
+
+Validation refuses to use bundles that could not be refreshed for 15 minutes, so a key the issuer
+withdrew is not trusted for as long as the agent is unreachable.
 
 They raise `SpiffeNotReady` while the integration is not loaded (raise `ConfigEntryNotReady` in
 your own setup when you get it), and `SpiffeError` when the agent cannot provide a token or a token
@@ -84,8 +87,9 @@ One service device, **SPIFFE Workload API**, with diagnostic entities:
 - **X.509-SVIDs available**.
 - **Last JWT-SVID fetch** (disabled by default).
 
-If the Workload API stops answering for five minutes, or refuses to issue an identity, a repair
-issue tells you so.
+If the Workload API stops answering for five minutes, a repair issue tells you so. Another one
+appears when an integration asks for a token and the Workload API refuses it, usually because Home
+Assistant has not been admitted at the issuer yet, or the audience is not allowed.
 
 ## Security model
 

@@ -126,3 +126,6 @@ async def test_reconfigure(hass: HomeAssistant, fake_source: FakeSource) -> None
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_SOCKET] == "unix:///share/spiffe/agent.sock"
+    await hass.async_block_till_done()
+    # The reload connected to the new address.
+    assert fake_source.uris[-1] == "unix:///share/spiffe/agent.sock"

@@ -72,6 +72,7 @@ class FakeSource(SpiffeSource):
         self.closed = False
         self.close_calls = 0
         self.svid_requests: list[tuple[set[str], str | None]] = []
+        self.uris: list[str] = []
 
     def _check(self) -> None:
         if not self.reachable:
@@ -121,6 +122,7 @@ def fake_source(signer: Signer) -> Generator[FakeSource]:
     def build(uri: str, timeout: float) -> FakeSource:
         # Keep the address validation real, so the tests cover it.
         socket_path_from_uri(uri)
+        source.uris.append(uri)
         if source.closed:
             source.closed = False
         return source

@@ -16,7 +16,7 @@ jobs:
     name: HACS
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hacs/action@main
         with:
           category: integration
@@ -27,7 +27,7 @@ jobs:
     name: Hassfest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: home-assistant/actions/hassfest@master
 
   test:
@@ -36,8 +36,8 @@ jobs:
     env:
       SPIFFEX_VERSION: "0.4.1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.14"
       - run: uv sync --group test
@@ -53,3 +53,26 @@ jobs:
           tar xzf "$archive" spiffex
           echo "SPIFFEX=$PWD/spiffex" >> "$GITHUB_ENV"
       - run: uv run pytest -v
+
+  ha-requirements:
+    # The tests pin one Home Assistant release. This checks that the integration's requirements
+    # still install, as prebuilt wheels, under the pins of the newest release.
+    name: Requirements fit the latest Home Assistant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Resolve under the latest release's package constraints
+        run: |
+          ha="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | jq -r .info.version)"
+          echo "Home Assistant ${ha}"
+          curl -fsSLo constraints.txt \
+            "https://raw.githubusercontent.com/home-assistant/core/${ha}/homeassistant/package_constraints.txt"
+          jq -r '.requirements[]' custom_components/spiffe/manifest.json > requirements.txt
+          for platform in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+            echo "== ${platform}"
+            uv pip compile requirements.txt -c constraints.txt \
+              --python-version 3.14 --python-platform "${platform}" --only-binary :all: \
+              --extra-index-url https://wheels.home-assistant.io/musllinux-index/ \
+              --index-strategy unsafe-best-match
+          done

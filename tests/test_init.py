@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -14,6 +15,7 @@ from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
 )
+from spiffe import TrustDomain
 
 from custom_components.spiffe import (
     SpiffeError,
@@ -30,6 +32,7 @@ from custom_components.spiffe.const import (
     HEALTH_INTERVAL,
     ISSUE_PERMISSION_DENIED,
     ISSUE_UNREACHABLE,
+    MAX_BUNDLE_AGE,
 )
 from custom_components.spiffe.source import SocketMissingError
 
@@ -37,6 +40,7 @@ from .conftest import SPIFFE_ID, FakeSource, Signer
 
 REACHABLE = "binary_sensor.spiffe_workload_api_workload_api"
 BUNDLE_KEYS = "sensor.spiffe_workload_api_trust_bundle_keys"
+X509 = "binary_sensor.spiffe_workload_api_x_509_svids_available"
 
 
 def _entry(socket: str = DEFAULT_SOCKET) -> MockConfigEntry:
@@ -166,3 +170,98 @@ async def test_bundles_refresh(
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     assert await async_validate_jwt_svid(hass, token, "aud") == SPIFFE_ID
+
+
+async def _tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, times: int = 1) -> None:
+    for _ in range(times):
+        freezer.tick(HEALTH_INTERVAL)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+
+async def test_checks_run_with_polling_disabled(
+    hass: HomeAssistant, fake_source: FakeSource, freezer: FrozenDateTimeFactory
+) -> None:
+    """Turning off polling must not stop the checks that refresh the bundles."""
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_SOCKET: DEFAULT_SOCKET}, pref_disable_polling=True
+    )
+    await _setup(hass, entry)
+    fake_source.reachable = False
+    await _tick(hass, freezer)
+    assert hass.states.get(REACHABLE).state == "off"
+
+
+async def test_stale_bundles_are_not_trusted(
+    hass: HomeAssistant, fake_source: FakeSource, freezer: FrozenDateTimeFactory
+) -> None:
+    await _setup(hass)
+    token = fake_source.signer.token({"aud"})
+    fake_source.reachable = False
+    await _tick(hass, freezer, int(MAX_BUNDLE_AGE / HEALTH_INTERVAL) + 1)
+    with pytest.raises(SpiffeError, match="not been refreshed"):
+        await async_validate_jwt_svid(hass, token, "aud")
+
+    fake_source.reachable = True
+    await _tick(hass, freezer)
+    fresh = fake_source.signer.token({"aud"})
+    assert await async_validate_jwt_svid(hass, fresh, "aud") == SPIFFE_ID
+
+
+async def test_validate_rejects_bad_audience(hass: HomeAssistant, fake_source: FakeSource) -> None:
+    await _setup(hass)
+    token = fake_source.signer.token({"aud"})
+    for audience in ("", ["aud"]):
+        with pytest.raises(ValueError):
+            await async_validate_jwt_svid(hass, token, audience)  # type: ignore[arg-type]
+
+
+async def test_bundles_returned_are_a_copy(
+    hass: HomeAssistant, fake_source: FakeSource, signer: Signer
+) -> None:
+    """A caller changing the bundles it got must not change what validation trusts."""
+    await _setup(hass)
+    other = Signer(key_id="other")
+    bundles = await async_get_jwt_bundles(hass)
+    bundles.put(other.bundles().get_bundle_for_trust_domain(TrustDomain("example.org")))
+    with pytest.raises(SpiffeError):
+        await async_validate_jwt_svid(hass, other.token({"aud"}), "aud")
+
+
+async def test_unload_clears_issues(
+    hass: HomeAssistant, fake_source: FakeSource, freezer: FrozenDateTimeFactory
+) -> None:
+    entry = await _setup(hass)
+    issues = ir.async_get(hass)
+    fake_source.permission_denied = True
+    with pytest.raises(SpiffeError):
+        await async_fetch_jwt_svid(hass, "aud")
+    fake_source.reachable = False
+    await _tick(hass, freezer, 7)
+    assert issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)
+    assert issues.async_get_issue(DOMAIN, ISSUE_PERMISSION_DENIED)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert not issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)
+    assert not issues.async_get_issue(DOMAIN, ISSUE_PERMISSION_DENIED)
+
+
+async def test_x509_entity(hass: HomeAssistant, fake_source: FakeSource) -> None:
+    fake_source.x509 = True
+    await _setup(hass)
+    assert hass.states.get(X509).state == "on"
+    assert await async_x509_available(hass) is True
+
+
+async def test_token_never_logged(
+    hass: HomeAssistant, fake_source: FakeSource, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    await _setup(hass)
+    token = await async_fetch_jwt_svid(hass, "aud")
+    await async_validate_jwt_svid(hass, token, "aud")
+    with pytest.raises(SpiffeError):
+        await async_validate_jwt_svid(hass, token, "other")
+    assert token not in caplog.text
+    for part in token.split("."):
+        assert part not in caplog.text

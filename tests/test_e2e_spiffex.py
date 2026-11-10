@@ -124,6 +124,46 @@ def test_fetch_and_validate(
         source.close()
 
 
+def test_identity_not_admitted(
+    agent_socket: tuple[str, bool, subprocess.Popen[bytes]], tmp_path: Path
+) -> None:
+    """An agent whose key the issuer does not know serves bundles but no tokens."""
+    uri, _, agent = agent_socket
+    issuer = next(a for a in agent.args if a.startswith("http://"))
+    key = tmp_path / "stranger.key"
+    subprocess.run([SPIFFEX, "key", "generate", "-out", str(key)], check=True, capture_output=True)
+    sock = Path(uri.removeprefix("unix://")).with_name("stranger.sock")
+    stranger = subprocess.Popen(
+        [
+            SPIFFEX,
+            "agent",
+            "-issuer",
+            issuer,
+            "-client-id",
+            "dev/stranger",
+            "-key-file",
+            str(key),
+            "-socket",
+            str(sock),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for(sock)
+        source = WorkloadApiSource(f"unix://{sock}", 10)
+        try:
+            source.fetch_jwt_bundles()
+            with pytest.raises(SourceUnavailableError) as err:
+                source.fetch_jwt_svid("spiffe://spiffex.test/dev/billing")
+            assert err.value.permission_denied
+        finally:
+            source.close()
+    finally:
+        stranger.terminate()
+        stranger.wait(timeout=10)
+
+
 def test_agent_stopped(agent_socket: tuple[str, bool, subprocess.Popen[bytes]]) -> None:
     """An agent that crashes leaves its socket file behind; calls then fail with a clear error."""
     uri, _, agent = agent_socket

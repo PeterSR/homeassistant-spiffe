@@ -40,8 +40,8 @@ welcome.
 ## Releases
 
 Bump `version` in `custom_components/spiffe/manifest.json` and `pyproject.toml`, move the
-*Unreleased* changelog entries under the new version, and tag `vX.Y.Z`. HACS offers the tagged
-releases.
+*Unreleased* changelog entries under the new version, tag `vX.Y.Z`, and publish a GitHub release
+for the tag. HACS offers GitHub releases.
 
 By contributing, you agree that your contribution is licensed under the [MIT License](LICENSE),
 and you agree to follow the [code of conduct](CODE_OF_CONDUCT.md).
