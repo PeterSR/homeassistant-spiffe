@@ -169,6 +169,14 @@ class EventWebhookSubentryFlow(ConfigSubentryFlow):
             if sub.subentry_type == SUBENTRY_EVENT_WEBHOOK and sub.subentry_id != except_id
         }
 
+    def _used_names(self, *, except_id: str | None = None) -> set[str]:
+        entry = self._get_entry()
+        return {
+            sub.data[CONF_NAME].casefold()
+            for sub in entry.subentries.values()
+            if sub.subentry_type == SUBENTRY_EVENT_WEBHOOK and sub.subentry_id != except_id
+        }
+
     def _validate(
         self, user_input: dict[str, Any], *, except_id: str | None = None
     ) -> tuple[dict[str, Any], dict[str, str]]:
@@ -177,6 +185,8 @@ class EventWebhookSubentryFlow(ConfigSubentryFlow):
         webhook_id = user_input[CONF_WEBHOOK_ID].strip()
         if not name:
             errors[CONF_NAME] = "name_required"
+        elif name.casefold() in self._used_names(except_id=except_id):
+            errors[CONF_NAME] = "name_in_use"
         if not _WEBHOOK_ID.fullmatch(webhook_id):
             errors[CONF_WEBHOOK_ID] = "invalid_webhook_id"
         elif webhook_id in self._used_webhook_ids(except_id=except_id):

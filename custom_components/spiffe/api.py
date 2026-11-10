@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Collection, Iterable
 
+import jwt
 from aiohttp import web
 from homeassistant.components import webhook
 from homeassistant.core import HomeAssistant
@@ -19,7 +20,8 @@ from spiffe import JwtBundleSet
 from .const import CONF_SPIFFE_ID, DOMAIN, MAX_BUNDLE_AGE
 from .coordinator import SpiffeCoordinator
 from .errors import SpiffeAuthError, SpiffeError, SpiffeNotReady
-from .replay import DATA_REPLAY_CACHE, ReplayCache
+from .ids import normalize_spiffe_id
+from .replay import DATA_REPLAY_CACHE, ReplayCache, ReplayCacheFull
 from .source import (
     AudienceNotAvailableError,
     FetchedJwtSvid,
@@ -134,20 +136,49 @@ async def async_verify_request(
 
     The request must carry `Authorization: Bearer <JWT-SVID>` whose audience is Home Assistant's
     own SPIFFE ID (the `spiffe_id` option of the integration), and whose subject is one of
-    `allowed_callers`. An empty `allowed_callers` admits nobody. A token is accepted once: replaying
+    `allowed_callers` (a collection of SPIFFE IDs; a bare string raises TypeError, an invalid ID
+    ValueError). The audience must be exactly that one SPIFFE ID, not a list with other services
+    next to it. An empty `allowed_callers` admits nobody. A token is accepted once: replaying
     it, on this or any other verified endpoint, fails.
 
     Raises SpiffeAuthError with status 401 (no, invalid, expired or replayed token) or 403 (a valid
     caller that is not allowed), and SpiffeNotReady when the integration is not loaded or has no
     SPIFFE ID configured (answer 503). The messages are for logs, not for the caller.
     """
-    return await _async_verify(hass, request, frozenset(allowed_callers))
+    return await _async_verify(hass, request, _normalize_callers(allowed_callers))
+
+
+def _normalize_callers(allowed_callers: Iterable[str]) -> frozenset[str]:
+    """Check and canonicalize a list of caller SPIFFE IDs.
+
+    Raises TypeError for a bare string (a typo that would match single characters) and ValueError
+    for an entry that is not a SPIFFE ID of a workload.
+    """
+    if isinstance(allowed_callers, str):
+        raise TypeError("allowed_callers must be a collection of SPIFFE IDs, not a string")
+    return frozenset(normalize_spiffe_id(caller) for caller in allowed_callers)
+
+
+def _audiences(token: str) -> set[str]:
+    """The `aud` claim of a token whose signature has been checked."""
+    claims = jwt.decode(
+        token, options={"verify_signature": False, "verify_aud": False, "verify_exp": False}
+    )
+    aud = claims.get("aud")
+    return {aud} if isinstance(aud, str) else set(aud) if isinstance(aud, list) else set()
 
 
 async def _async_verify(
     hass: HomeAssistant, request: web.Request, allowed_callers: Collection[str] | None
 ) -> str:
     """Verify a request. `None` for `allowed_callers` admits any valid caller."""
+    # Look at the request before anything about this installation, so an unauthenticated caller
+    # learns nothing about whether SPIFFE is ready.
+    header = request.headers.get("Authorization", "")
+    if header[: len(BEARER_PREFIX)].lower() != BEARER_PREFIX or not header[len(BEARER_PREFIX) :]:
+        raise SpiffeAuthError(401, "no bearer token")
+    token = header[len(BEARER_PREFIX) :].strip()
+
     coordinator = _coordinator(hass)
     audience = coordinator.config_entry.options.get(CONF_SPIFFE_ID)
     if not audience:
@@ -158,17 +189,16 @@ async def _async_verify(
         # Not the caller's fault, so not a 401.
         raise SpiffeNotReady(str(err)) from err
 
-    header = request.headers.get("Authorization", "")
-    if header[: len(BEARER_PREFIX)].lower() != BEARER_PREFIX or not header[len(BEARER_PREFIX) :]:
-        raise SpiffeAuthError(401, "no bearer token")
-    token = header[len(BEARER_PREFIX) :].strip()
-
     try:
         svid = await _async_validate(hass, token, audience)
     except SpiffeNotReady:
         raise
     except (SpiffeError, ValueError) as err:
         raise SpiffeAuthError(401, f"invalid token: {err}") from err
+    # py-spiffe accepts a token that names other audiences as well. A token meant for several
+    # services could be replayed by any of them, so a request must be for this one alone.
+    if _audiences(token) != {audience}:
+        raise SpiffeAuthError(401, "token has more than one audience")
 
     if allowed_callers is not None and svid.spiffe_id not in allowed_callers:
         raise SpiffeAuthError(403, f"caller {svid.spiffe_id} is not allowed")
@@ -176,7 +206,12 @@ async def _async_verify(
     # Nothing awaits between the check and the record, so two requests with the same token cannot
     # both get through.
     cache = hass.data.setdefault(DATA_REPLAY_CACHE, ReplayCache())
-    if not cache.check_and_record(token, svid.expiry.timestamp(), dt_util.utcnow().timestamp()):
+    try:
+        fresh = cache.check_and_record(token, svid.expiry.timestamp(), dt_util.utcnow().timestamp())
+    except ReplayCacheFull as err:
+        # Failing closed: forgetting a live token would let it be replayed.
+        raise SpiffeNotReady("too many tokens are in use; try again shortly") from err
+    if not fresh:
         raise SpiffeAuthError(401, "token already used")
     return svid.spiffe_id
 
@@ -202,12 +237,13 @@ def async_register_verified_webhook(
     """Register a webhook that only answers callers presenting a valid JWT-SVID.
 
     `handler(hass, webhook_id, request, caller)` runs only for a request that passed
-    `async_verify_request` for one of `allowed_callers`; `caller` is its SPIFFE ID. Failures
+    `async_verify_request` for one of `allowed_callers` (raises TypeError for a bare string and
+    ValueError for an invalid SPIFFE ID); `caller` is its SPIFFE ID. Failures
     answer a JSON body `{"error": "<reason>"}` with 401, 403 or 503 and never include token
     contents or exception text. The webhook is not limited to the local network. Unregister it
     with `homeassistant.components.webhook.async_unregister(hass, webhook_id)`.
     """
-    callers = frozenset(allowed_callers)
+    callers = _normalize_callers(allowed_callers)
 
     async def _handle(hass: HomeAssistant, webhook_id: str, request: web.Request) -> web.Response:
         try:

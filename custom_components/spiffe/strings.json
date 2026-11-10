@@ -126,6 +126,7 @@
       },
       "error": {
         "name_required": "Give it a name.",
+      "name_in_use": "Another event webhook already has this name.",
         "invalid_webhook_id": "Use 8 to 128 letters, digits, dashes or underscores.",
         "webhook_id_in_use": "Another event webhook already uses this ID.",
         "invalid_spiffe_id": "One of the callers is not a valid SPIFFE ID. Use spiffe://trust-domain/path.",
@@ -174,6 +175,12 @@
     },
     "authorization_header": {
       "message": "The Authorization header is set by this action and cannot be overridden."
+    },
+    "invalid_header": {
+      "message": "The header {header} is not valid. Names must be plain header tokens, and values cannot contain line breaks or null characters."
+    },
+    "request_failed": {
+      "message": "The request to {host} failed ({error})."
     }
   }
 }

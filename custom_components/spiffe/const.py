@@ -50,7 +50,10 @@ EVENT_WEBHOOK: Final = "spiffe_webhook"
 
 # The replay cache holds at most this many tokens. A token lives for minutes, so this is far more
 # than a Home Assistant installation sees.
-REPLAY_CACHE_MAX_ENTRIES: Final = 4096
+REPLAY_CACHE_MAX_ENTRIES: Final = 16384
+
+# The largest body an event webhook reads.
+EVENT_BODY_LIMIT_BYTES: Final = 256 * 1024
 
 # What the http_request action returns of a response body.
 RESPONSE_LIMIT_BYTES: Final = 64 * 1024

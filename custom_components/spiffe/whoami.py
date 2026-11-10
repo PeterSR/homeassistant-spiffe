@@ -21,11 +21,30 @@ class WhoamiView(HomeAssistantView):
     name = "api:spiffe:whoami"
     requires_auth = False
 
+    # Every method answers 404 while disabled, so the endpoint cannot be told apart from a path
+    # that does not exist.
+    async def get(self, request: web.Request) -> web.Response:
+        return await self._handle(request)
+
+    async def put(self, request: web.Request) -> web.Response:
+        return await self._handle(request)
+
+    async def patch(self, request: web.Request) -> web.Response:
+        return await self._handle(request)
+
+    async def delete(self, request: web.Request) -> web.Response:
+        return await self._handle(request)
+
     async def post(self, request: web.Request) -> web.Response:
+        return await self._handle(request)
+
+    async def _handle(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
         entries = hass.config_entries.async_loaded_entries(DOMAIN)
         if not entries or not entries[0].options.get(CONF_EXPOSE_WHOAMI):
             return web.Response(status=404)
+        if request.method != "POST":
+            return web.Response(status=405, headers={"Allow": "POST"})
         try:
             caller = await _async_verify(hass, request, None)
         except SpiffeAuthError as err:

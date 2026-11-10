@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -65,8 +66,21 @@ def _check_url(url: str) -> None:
         raise ServiceValidationError(translation_domain=DOMAIN, translation_key="invalid_url")
 
 
+# An HTTP header name is a token (RFC 9110); a value must not hold line breaks or NUL, which
+# would let a caller smuggle in headers of their own.
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+_HEADER_VALUE_FORBIDDEN = re.compile(r"[\r\n\x00]")
+
+
 def _check_headers(headers: dict[str, str]) -> None:
-    if any(name.strip().lower() == "authorization" for name in headers):
+    for name, value in headers.items():
+        if not _HEADER_NAME.fullmatch(name) or _HEADER_VALUE_FORBIDDEN.search(value):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_header",
+                translation_placeholders={"header": repr(name)},
+            )
+    if any(name.lower() == "authorization" for name in headers):
         raise ServiceValidationError(
             translation_domain=DOMAIN, translation_key="authorization_header"
         )
@@ -112,8 +126,15 @@ async def _async_http_request(call: ServiceCall) -> ServiceResponse:
             status = response.status
             content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
     except (aiohttp.ClientError, TimeoutError) as err:
-        # The message of a client error can name the URL but never holds the token.
-        raise HomeAssistantError(f"The request to {urlsplit(url).netloc} failed: {err}") from err
+        # Only the host and the kind of error: a URL can hold credentials, which a message must not.
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="request_failed",
+            translation_placeholders={
+                "host": urlsplit(url).hostname or "",
+                "error": type(err).__name__,
+            },
+        ) from err
 
     if not truncated and content_type.endswith("json"):
         try:
