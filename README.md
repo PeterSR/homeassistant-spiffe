@@ -103,11 +103,10 @@ SPIFFE ID, and answers as follows:
   an invalid or expired token, the wrong audience or an unknown signer:
   `SpiffeAuthError` with status 401;
 - a valid token whose subject is not in `allowed_callers`: status 403 (an empty list admits nobody);
-- a token that was already accepted: status 401. Accepted tokens are remembered until they expire
-  in one bounded cache, shared by every verified endpoint in Home Assistant (see the security
-  model);
-- no SPIFFE ID configured, integration not loaded, bundles too old, or the replay cache full:
-  `SpiffeNotReady` (answer 503).
+- with the option **Accept each token only once** on, a token that was already accepted: status
+  401 (see the security model; it is off by default);
+- no SPIFFE ID configured, integration not loaded, bundles too old, or (single-use mode only) the
+  memory of used tokens full: `SpiffeNotReady` (answer 503).
 
 `async_register_verified_webhook` wraps Home Assistant's webhook registration (it is not limited to
 the local network, because the token is the authentication). The handler runs only for a verified
@@ -209,7 +208,8 @@ that runs it with a user-supplied URL has the same problem.
 ## Whoami
 
 When **Offer the whoami endpoint** is enabled in the options, `POST /api/spiffe/whoami` with a
-bearer JWT-SVID runs the full check (signature, audience, expiry, replay) for any caller, and
+bearer JWT-SVID runs the full check (signature, audience, expiry, and single use when that option is on) for any
+caller, and
 answers `{"caller": "<spiffe id>", "audience": "<Home Assistant's spiffe id>"}`. It is for checking
 that a new workload is set up correctly. It is off by default and answers 404 while it is off.
 
@@ -247,25 +247,32 @@ The agent decides who Home Assistant is. An agent running in another container c
 tell which process connects to it (in practice, not without turning off the app's protection
 mode), so whoever can reach the socket gets the identity, whichever implementation you use.
 
-See [SECURITY.md](SECURITY.md) to report a vulnerability.
-
 Incoming calls are only as trustworthy as your trust domain's keys: Home Assistant accepts any
 token signed by a key in the bundles it holds, from the callers you allow.
 
 - A request must be for Home Assistant alone: the token's audience must be exactly Home
   Assistant's SPIFFE ID, not a list that names other services too. (`async_validate_jwt_svid`
   keeps its 0.1.0 behavior and accepts a token that lists more audiences.)
-- Each token works once. Accepted tokens are remembered in memory, by the SHA-256 of their header
-  and payload, until they expire, so a variant with a rewritten signature counts as the same
-  token. The memory is lost on a restart, so a token captured before a restart can be replayed
-  until it expires, which is at most its lifetime (5 minutes with typical issuers). Because
-  identical claims are one token, an issuer should put a unique `jti` in each token, or two
-  tokens issued in the same second look like a replay. If the memory is full of live tokens,
-  requests are answered 503 rather than forgetting one.
+- Tokens are bearer tokens: whoever holds one can use it until it expires, typically 5 minutes.
+  What protects them is TLS between the caller and Home Assistant, the short lifetime, the exact
+  audience rule (a token minted for another service cannot be replayed to Home Assistant) and the
+  allowlist of callers. Home Assistant does not remember tokens by default, so a captured token
+  can be used again until it expires.
+- Optionally, turn on **Accept each token only once** in the options to refuse a token that was
+  already accepted, on any verified endpoint. Home Assistant then remembers accepted tokens in
+  memory, by the SHA-256 of their header and payload (so a variant with a rewritten signature
+  counts as the same token), until they expire. The memory is lost on a restart, and when it is
+  full of live tokens requests are answered 503 rather than forgetting one. **Only enable this if
+  your issuer mints a fresh token for every fetch.** Agents that cache tokens, such as SPIRE and
+  spiffex, hand out the identical token for repeated fetches, and their callers' repeated calls
+  would be refused. An issuer that does mint fresh tokens should put a unique `jti` in each, or
+  two tokens issued in the same second look like one.
 - `http_request` over plain `http://` sends the token in cleartext. Use `https://`.
 - The `spiffe_webhook` event is only as trustworthy as Home Assistant's administrators: an admin
   can fire it by hand with any `caller`. In automations, match on `webhook_id` together with
   `caller`, not on the event type alone.
+
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## Development
 
