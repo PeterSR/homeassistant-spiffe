@@ -20,7 +20,21 @@ from pathlib import Path
 
 import pytest
 import pytest_socket
+from aiohttp.test_utils import make_mocked_request
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.spiffe import (
+    SpiffeAuthError,
+    async_fetch_jwt_svid,
+    async_verify_request,
+)
+from custom_components.spiffe.const import (
+    CONF_SINGLE_USE_TOKENS,
+    CONF_SOCKET,
+    CONF_SPIFFE_ID,
+    DOMAIN,
+)
 from custom_components.spiffe.source import (
     SourceUnavailableError,
     WorkloadApiSource,
@@ -177,3 +191,74 @@ def test_agent_stopped(agent_socket: tuple[str, bool, subprocess.Popen[bytes]]) 
             source.fetch_jwt_bundles()
     finally:
         source.close()
+
+
+async def _verify_setup(
+    hass: HomeAssistant, uri: str, me: str, *, single_use: bool = False
+) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_SOCKET: uri},
+        options={CONF_SPIFFE_ID: me, CONF_SINGLE_USE_TOKENS: single_use},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+def _request(token: str):
+    return make_mocked_request("POST", "/", headers={"Authorization": f"Bearer {token}"})
+
+
+async def test_verify_request(
+    hass: HomeAssistant, agent_socket: tuple[str, bool, subprocess.Popen[bytes]]
+) -> None:
+    """A token the agent minted verifies for the caller it names."""
+    uri, _, _ = agent_socket
+    me = "spiffe://spiffex.test/dev/billing"
+    caller = "spiffe://spiffex.test/dev/orders"  # the identity the agent hands out
+    entry = await _verify_setup(hass, uri, me)
+
+    token = await async_fetch_jwt_svid(hass, me)
+    assert await async_verify_request(hass, _request(token), allowed_callers=[caller]) == caller
+
+    with pytest.raises(SpiffeAuthError) as refused:
+        await async_verify_request(hass, _request(token), allowed_callers=[me])
+    assert refused.value.status == 403
+
+    wrong_audience = await async_fetch_jwt_svid(hass, "spiffe://spiffex.test/dev/elsewhere")
+    with pytest.raises(SpiffeAuthError) as wrong:
+        await async_verify_request(hass, _request(wrong_audience), allowed_callers=[caller])
+    assert wrong.value.status == 401
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("single_use", [False, True], ids=["default", "single-use"])
+async def test_cached_tokens(
+    hass: HomeAssistant,
+    agent_socket: tuple[str, bool, subprocess.Popen[bytes]],
+    single_use: bool,
+) -> None:
+    """The agent caches tokens, so two fetches are one token: reusable unless single use is on."""
+    uri, _, _ = agent_socket
+    me = "spiffe://spiffex.test/dev/billing"
+    caller = "spiffe://spiffex.test/dev/orders"
+    await _verify_setup(hass, uri, me, single_use=single_use)
+
+    first = await async_fetch_jwt_svid(hass, me)
+    second = await async_fetch_jwt_svid(hass, me)
+    # A deliberate canary: if spiffex stops caching tokens, this fails and the README's advice on
+    # single-use mode (and this test) needs revisiting.
+    assert first == second
+
+    assert await async_verify_request(hass, _request(first), allowed_callers=[caller]) == caller
+    if single_use:
+        with pytest.raises(SpiffeAuthError) as replayed:
+            await async_verify_request(hass, _request(second), allowed_callers=[caller])
+        assert replayed.value.status == 401
+    else:
+        assert (
+            await async_verify_request(hass, _request(second), allowed_callers=[caller]) == caller
+        )

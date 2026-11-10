@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Generator, Iterable
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -54,6 +55,8 @@ class Signer:
                 "aud": sorted(audience),
                 "iat": now,
                 "exp": now + int(lifetime.total_seconds()),
+                # Tokens minted in the same second must differ, as they do with a real issuer.
+                "jti": uuid.uuid4().hex,
             },
             self.key,
             algorithm="ES256",
@@ -137,3 +140,8 @@ def fake_source(signer: Signer) -> Generator[FakeSource]:
         patch("custom_components.spiffe.config_flow.WorkloadApiSource", side_effect=build),
     ):
         yield source
+
+
+HA_SPIFFE_ID = "spiffe://example.org/ha/core"
+CALLER = "spiffe://example.org/orders/api"
+OTHER = "spiffe://example.org/billing/api"

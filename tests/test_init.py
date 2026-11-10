@@ -53,7 +53,7 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry | None = None) -> M
     entry = entry or _entry()
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     return entry
 
 
@@ -139,7 +139,7 @@ async def test_unreachable_then_recovers(
     fake_source.reachable = False
     freezer.tick(HEALTH_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert hass.states.get(REACHABLE).state == "off"
     # The source is still in its grace period: no repair issue yet.
     assert not issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)
@@ -147,13 +147,13 @@ async def test_unreachable_then_recovers(
     for _ in range(6):
         freezer.tick(HEALTH_INTERVAL)
         async_fire_time_changed(hass)
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
     assert issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)
 
     fake_source.reachable = True
     freezer.tick(HEALTH_INTERVAL)
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert hass.states.get(REACHABLE).state == "on"
     assert not issues.async_get_issue(DOMAIN, ISSUE_UNREACHABLE)
 
@@ -170,7 +170,7 @@ async def test_bundles_refresh(
 
     freezer.tick(HEALTH_INTERVAL + timedelta(seconds=1))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
     assert await async_validate_jwt_svid(hass, token, "aud") == SPIFFE_ID
 
 
@@ -178,7 +178,7 @@ async def _tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, times: int 
     for _ in range(times):
         freezer.tick(HEALTH_INTERVAL)
         async_fire_time_changed(hass)
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
 
 async def test_checks_run_with_polling_disabled(
