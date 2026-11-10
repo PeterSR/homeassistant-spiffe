@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-10
+
+### Added
+
+- The official SPIFFE logo as the integration's icon and logo in Home Assistant (light and dark
+  variants).
+
 ## [0.2.0] - 2026-11-10
 
 ### Added
@@ -34,6 +41,7 @@ All notable changes to this project are documented here. The format is based on
 - Repair issues when the Workload API has not answered for five minutes, when it has no identity
   for Home Assistant at all, and when an integration's token request is refused.
 
-[Unreleased]: https://github.com/PeterSR/homeassistant-spiffe/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/PeterSR/homeassistant-spiffe/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/PeterSR/homeassistant-spiffe/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/PeterSR/homeassistant-spiffe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PeterSR/homeassistant-spiffe/releases/tag/v0.1.0

@@ -331,3 +331,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 [MIT](LICENSE)
+
+The SPIFFE logo in `custom_components/spiffe/brand/` is a trademark of The Linux Foundation, taken
+from the [CNCF artwork repository](https://github.com/cncf/artwork/tree/main/projects/spiffe) and
+used under the [Linux Foundation trademark guidelines](https://www.linuxfoundation.org/trademark-usage)
+to show compatibility with SPIFFE. This project is not affiliated with or endorsed by the SPIFFE
+project, the CNCF or The Linux Foundation.
