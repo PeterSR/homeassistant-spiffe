@@ -18,9 +18,9 @@ from pytest_homeassistant_custom_component.common import (
 from spiffe import TrustDomain
 
 from custom_components.spiffe import (
-    _delete_issues,
     SpiffeError,
     SpiffeNotReady,
+    _delete_issues,
     async_fetch_jwt_svid,
     async_get_jwt_bundles,
     async_validate_jwt_svid,
